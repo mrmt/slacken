@@ -32,5 +32,5 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           NOTION_DATABASE_ID: ${{ vars.NOTION_DATABASE_ID }}
           SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}
-          LOOKBACK_HOURS: ${{ inputs.lookback_hours || '4' }}
+          LOOKBACK_HOURS: ${{ inputs.lookback_hours || '48' }}
         run: uv run slacken

@@ -109,7 +109,7 @@ PROMPT = (
 
 def analyze_image(client: genai.Client, image_bytes: bytes, media_type: str) -> str:
     """Gemini で画像から食事内容を抽出。一時エラー時は指数バックオフでリトライ"""
-    max_attempts = 5
+    max_attempts = 8
     for attempt in range(max_attempts):
         try:
             resp = client.models.generate_content(
@@ -121,10 +121,10 @@ def analyze_image(client: genai.Client, image_bytes: bytes, media_type: str) -> 
             )
             return (resp.text or "").strip()
         except genai_errors.APIError as e:
-            # 503/429/500 系は一時エラーとしてリトライ
+            # 503/429/500 系は一時エラーとしてリトライ (最大 ~2分待機)
             code = getattr(e, "code", None)
             if code in (429, 500, 503) and attempt < max_attempts - 1:
-                wait = 2**attempt + random.random()
+                wait = min(2**attempt, 60) + random.random()
                 print(f"gemini {code}, retry in {wait:.1f}s (attempt {attempt+1}/{max_attempts})", file=sys.stderr)
                 time.sleep(wait)
                 continue
