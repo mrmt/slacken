@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import random
 import re
 import sys
+import time
 from zoneinfo import ZoneInfo
 
 import requests
 from google import genai
 from google.genai import types as genai_types
+from google.genai import errors as genai_errors
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
@@ -105,15 +108,27 @@ PROMPT = (
 
 
 def analyze_image(client: genai.Client, image_bytes: bytes, media_type: str) -> str:
-    """Gemini で画像から食事内容を抽出"""
-    resp = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=[
-            genai_types.Part.from_bytes(data=image_bytes, mime_type=media_type),
-            PROMPT,
-        ],
-    )
-    return (resp.text or "").strip()
+    """Gemini で画像から食事内容を抽出。一時エラー時は指数バックオフでリトライ"""
+    max_attempts = 5
+    for attempt in range(max_attempts):
+        try:
+            resp = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=[
+                    genai_types.Part.from_bytes(data=image_bytes, mime_type=media_type),
+                    PROMPT,
+                ],
+            )
+            return (resp.text or "").strip()
+        except genai_errors.APIError as e:
+            # 503/429/500 系は一時エラーとしてリトライ
+            code = getattr(e, "code", None)
+            if code in (429, 500, 503) and attempt < max_attempts - 1:
+                wait = 2**attempt + random.random()
+                print(f"gemini {code}, retry in {wait:.1f}s (attempt {attempt+1}/{max_attempts})", file=sys.stderr)
+                time.sleep(wait)
+                continue
+            raise
 
 
 def notion_find_by_permalink(permalink: str) -> str | None:
