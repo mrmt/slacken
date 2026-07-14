@@ -1,0 +1,36 @@
+name: sync
+
+on:
+  schedule:
+    # 1時間おき (UTC)
+    - cron: "0 * * * *"
+  workflow_dispatch:
+    inputs:
+      lookback_hours:
+        description: "遡って取り込む時間 (時間)"
+        required: false
+        default: "168"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: install
+        run: uv sync --frozen
+
+      - name: run sync
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NOTION_DATABASE_ID: ${{ vars.NOTION_DATABASE_ID }}
+          SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}
+          LOOKBACK_HOURS: ${{ inputs.lookback_hours || '4' }}
+        run: uv run slacken
