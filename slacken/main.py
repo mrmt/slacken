@@ -1,7 +1,6 @@
 """Slack #food → Notion 食事記録DB 同期スクリプト"""
 from __future__ import annotations
 
-import base64
 import datetime as dt
 import os
 import re
@@ -9,16 +8,18 @@ import sys
 from zoneinfo import ZoneInfo
 
 import requests
-from anthropic import Anthropic
+from google import genai
+from google.genai import types as genai_types
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 SLACK_TOKEN = os.environ["SLACK_BOT_TOKEN"]
 NOTION_TOKEN = os.environ["NOTION_TOKEN"]
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+GOOGLE_API_KEY = os.environ["GOOGLE_API_KEY"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
 SLACK_CHANNEL = os.environ.get("SLACK_CHANNEL", "food")
 LOOKBACK_HOURS = int(os.environ.get("LOOKBACK_HOURS", "168"))  # 7日間
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 JST = ZoneInfo("Asia/Tokyo")
 NOTION_API = "https://api.notion.com/v1"
@@ -94,35 +95,25 @@ def download_slack_file(url: str) -> tuple[bytes, str]:
     return r.content, r.headers.get("Content-Type", "image/jpeg").split(";")[0]
 
 
-def analyze_image(client: Anthropic, image_bytes: bytes, media_type: str) -> str:
-    """Claude Vision で画像から食事内容を抽出"""
-    b64 = base64.standard_b64encode(image_bytes).decode()
-    resp = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=512,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": media_type, "data": b64},
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            "この画像は食事の記録です。写っているメニュー、注文、料理内容を"
-                            "箇条書きで日本語で列挙してください。"
-                            "文字が写っていれば正確に書き起こし、"
-                            "料理の写真なら見た目から料理名を推定してください。"
-                            "前置きや説明は不要、箇条書きだけ返してください。"
-                        ),
-                    },
-                ],
-            }
+PROMPT = (
+    "この画像は食事の記録です。写っているメニュー、注文、料理内容を"
+    "箇条書きで日本語で列挙してください。"
+    "文字が写っていれば正確に書き起こし、"
+    "料理の写真なら見た目から料理名を推定してください。"
+    "前置きや説明は不要、箇条書きだけ返してください。"
+)
+
+
+def analyze_image(client: genai.Client, image_bytes: bytes, media_type: str) -> str:
+    """Gemini で画像から食事内容を抽出"""
+    resp = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[
+            genai_types.Part.from_bytes(data=image_bytes, mime_type=media_type),
+            PROMPT,
         ],
     )
-    return resp.content[0].text.strip()
+    return (resp.text or "").strip()
 
 
 def notion_find_by_permalink(permalink: str) -> str | None:
@@ -177,7 +168,7 @@ def notion_upsert(
 
 
 def process_message(
-    slack: WebClient, anthropic_client: Anthropic, channel_id: str, msg: dict
+    slack: WebClient, gemini_client: genai.Client, channel_id: str, msg: dict
 ) -> None:
     # bot自身・システムメッセージは無視
     if msg.get("subtype") in ("channel_join", "channel_leave", "bot_message"):
@@ -199,7 +190,7 @@ def process_message(
             continue
         try:
             body, mt = download_slack_file(url)
-            image_texts.append(analyze_image(anthropic_client, body, mt or mimetype))
+            image_texts.append(analyze_image(gemini_client, body, mt or mimetype))
         except Exception as e:
             print(f"image analyze failed for {url}: {e}", file=sys.stderr)
 
@@ -228,7 +219,7 @@ def process_message(
 
 def main() -> None:
     slack = WebClient(token=SLACK_TOKEN)
-    anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY)
+    gemini_client = genai.Client(api_key=GOOGLE_API_KEY)
     channel_id = resolve_channel_id(slack, SLACK_CHANNEL)
 
     oldest = (dt.datetime.now(tz=JST) - dt.timedelta(hours=LOOKBACK_HOURS)).timestamp()
@@ -246,7 +237,7 @@ def main() -> None:
 
         for msg in resp.get("messages", []):
             try:
-                process_message(slack, anthropic_client, channel_id, msg)
+                process_message(slack, gemini_client, channel_id, msg)
                 total += 1
             except Exception as e:
                 print(f"failed to process ts={msg.get('ts')}: {e}", file=sys.stderr)

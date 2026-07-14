@@ -5,7 +5,7 @@ description = "Slack #food への食事投稿をNotion DBに取り込む"
 requires-python = ">=3.11"
 dependencies = [
     "slack-sdk>=3.27",
-    "anthropic>=0.40",
+    "google-genai>=1.0",
     "requests>=2.32",
 ]
 

@@ -59,7 +59,7 @@ GitHub Actions cron (1時間おき) で `conversations.history` を叩き、前�
 
 - `SLACK_BOT_TOKEN` — `#food` の読み取り権限 (`channels:history`, `files:read`)
 - `NOTION_TOKEN` — 食事記録DBへの読み書き権限
-- `ANTHROPIC_API_KEY` — 画像解析用
+- `GOOGLE_API_KEY` — 画像解析用 (Gemini)
 
 ## 実装状況
 
