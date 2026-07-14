@@ -19,7 +19,7 @@ GOOGLE_API_KEY = os.environ["GOOGLE_API_KEY"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
 SLACK_CHANNEL = os.environ.get("SLACK_CHANNEL", "food")
 LOOKBACK_HOURS = int(os.environ.get("LOOKBACK_HOURS", "168"))  # 7日間
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
 
 JST = ZoneInfo("Asia/Tokyo")
 NOTION_API = "https://api.notion.com/v1"
