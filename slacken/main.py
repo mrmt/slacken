@@ -131,8 +131,8 @@ def analyze_image(client: genai.Client, image_bytes: bytes, media_type: str) -> 
             raise
 
 
-def notion_find_by_permalink(permalink: str) -> str | None:
-    """permalinkでNotion既存レコード検索"""
+def notion_find_by_permalink(permalink: str) -> tuple[str, str] | None:
+    """permalinkでNotion既存レコード検索。(page_id, 既存のSlack最終編集ts) を返す"""
     r = requests.post(
         f"{NOTION_API}/databases/{NOTION_DATABASE_ID}/query",
         headers=NOTION_HEADERS,
@@ -144,13 +144,30 @@ def notion_find_by_permalink(permalink: str) -> str | None:
     )
     r.raise_for_status()
     results = r.json().get("results", [])
-    return results[0]["id"] if results else None
+    if not results:
+        return None
+    page = results[0]
+    prop = page.get("properties", {}).get("Slack最終編集", {})
+    rich = prop.get("rich_text") or []
+    stored_ts = rich[0].get("plain_text", "") if rich else ""
+    return page["id"], stored_ts
 
 
 def notion_upsert(
-    permalink: str, date: dt.date, meal: str, content: str, source: str
-) -> None:
-    page_id = notion_find_by_permalink(permalink)
+    permalink: str,
+    date: dt.date,
+    meal: str,
+    content: str,
+    source: str,
+    slack_last_edit_ts: str,
+) -> bool:
+    """Notionへupsert。スキップした場合 False、書き込んだ場合 True を返す"""
+    found = notion_find_by_permalink(permalink)
+    page_id = found[0] if found else None
+    stored_ts = found[1] if found else ""
+    # Slack側の最終編集tsが前回同期時と同じなら、Notion手動編集を保護してスキップ
+    if page_id and stored_ts == slack_last_edit_ts:
+        return False
     title = f"{date.isoformat()} {meal}"
     properties = {
         "名前": {"title": [{"text": {"content": title}}]},
@@ -159,6 +176,7 @@ def notion_upsert(
         "内容": {"rich_text": [{"text": {"content": content[:2000]}}]},
         "Slack投稿元": {"url": permalink},
         "取込元": {"select": {"name": source}},
+        "Slack最終編集": {"rich_text": [{"text": {"content": slack_last_edit_ts}}]},
     }
     if page_id:
         r = requests.patch(
@@ -180,6 +198,7 @@ def notion_upsert(
     if not r.ok:
         print(f"notion error: {r.status_code} {r.text}", file=sys.stderr)
         r.raise_for_status()
+    return True
 
 
 def process_message(
@@ -228,8 +247,13 @@ def process_message(
     permalink = slack.chat_getPermalink(channel=channel_id, message_ts=msg["ts"])[
         "permalink"
     ]
-    notion_upsert(permalink, date, meal, content, source)
-    print(f"synced: {date} {meal} ({source}) {permalink}")
+    # Slack側の最終編集ts (編集済なら edited.ts、なければ投稿ts)
+    slack_last_edit_ts = (msg.get("edited") or {}).get("ts") or msg["ts"]
+    wrote = notion_upsert(permalink, date, meal, content, source, slack_last_edit_ts)
+    if wrote:
+        print(f"synced: {date} {meal} ({source}) {permalink}")
+    else:
+        print(f"skipped (unchanged): {permalink}")
 
 
 def main() -> None:
