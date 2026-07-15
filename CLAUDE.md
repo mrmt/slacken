@@ -36,7 +36,10 @@ Slack `#food` チャンネルへの食事投稿を Notion DB「食事記録」�
 - **Gemini 呼び出しは指数バックオフでリトライ** (429/500/503、最大8回・最大60秒待機)。1件の一時エラーで同期全体が落ちないよう `process_message` レベルでも例外catch
 - **cron は1時間おき**。要件は「4時間おきで可」だが編集追随のため短めに設定 (README記載)
 - **JST固定** (`Asia/Tokyo`)。時間帯による区分判定・日付計算は全てJSTで行う
-- **依存は Notion 公式SDKを使わず requests 直叩き**。Notionプロパティ名は日本語 (「名前」「日付」「区分」「内容」「Slack投稿元」「取込元」)
+- **依存は Notion 公式SDKを使わず requests 直叩き**。Notionプロパティ名は日本語 (「名前」「日付」「区分」「内容」「写真」「Slack投稿元」「Slack最終編集」「取込元」)
+- **Notion手動編集の保護**: `Slack最終編集` に Slack 側の最終編集ts を保存し、次回同期時に一致すれば PATCH スキップ
+- **画像は Notion File Upload API で `写真` プロパティに添付**。画像バイトは Gemini 解析と Notion アップロードで共用 (二重DL回避)
+- **本文の日付表現除去**: 「昨日」「7/14」等は区分・日付判定に使用後、Gemini で自然に除去して `内容` に格納
 
 ## GitHub Actions
 

@@ -15,10 +15,11 @@ Slack `#food` チャンネルへの食事投稿を、Notion DBに自動取り込
 | 名前 | Title | 例「2026-07-14 昼食」自動生成 |
 | 日付 | Date | 投稿の日付指定 or 投稿時刻 |
 | 区分 | Select | 朝食 / 昼食 / 夕食 / 間食 |
-| 内容 | Rich Text | テキスト投稿 or 画像解析結果 |
-| 写真 | Files | Slack添付画像 (任意) |
+| 内容 | Rich Text | テキスト投稿 (日付表現除去済) or 画像解析結果 |
+| 写真 | Files | Slack添付画像 (Notion File Upload API 経由) |
 | Slack投稿元 | URL | 元メッセージのpermalink (Upsert判定キー) |
-| 取込元 | Select | テキスト / 画像OCR / 画像解析 / テキスト+画像 |
+| Slack最終編集 | Rich Text | Slackメッセージの最終編集ts (差分同期・Notion手動編集保護に使用) |
+| 取込元 | Select | テキスト / 画像解析 / テキスト+画像 |
 
 DB URL: <https://app.notion.com/p/b12824e541a7443bbd804ed58dd13f12>
 
@@ -35,19 +36,27 @@ DB URL: <https://app.notion.com/p/b12824e541a7443bbd804ed58dd13f12>
 
 ### 日付判定
 
-投稿本文に日付指定があればそれを優先。なければ投稿タイムスタンプ。
+以下の優先順で判定:
+
+1. 本文の日付指定 `M/D` or `M月D日` (未来日は前年扱い)
+2. 相対日付キーワード: 「今日/本日/今朝/今晩/今夜/けさ」= 当日、「昨日/きのう/ゆうべ/夕べ/昨夜/昨晩」= 前日、「一昨日/おととい/おとつい」= 2日前
+3. 投稿タイムスタンプ (JST)
 
 ### 内容抽出
 
-- テキスト投稿: そのまま「内容」に格納
-- 画像投稿: Claude API (vision) で解析
+- テキスト投稿: 本文をそのまま格納。ただし日付指定・相対日付表現は Gemini で自然に除去し、食べたものの記述だけを残す
+- 画像投稿: Gemini (vision) で解析
   - メニュー/注文票の写真 → OCRテキスト
   - 食事そのものの写真 → 内容の推定 (箇条書き)
+  - 画像バイトは Notion File Upload API で `写真` プロパティにも添付
 - 両方あれば併記
 
-### Upsert
+### Upsert / 差分同期
 
-Slack投稿のpermalinkを「Slack投稿元」に格納し、これをキーに新規/更新判定。編集された投稿にも追随。
+- Slack投稿の permalink を `Slack投稿元` に格納し、これをキーに新規/更新判定
+- Slackメッセージの最終編集ts (`edited.ts` or 投稿ts) を `Slack最終編集` に保存
+- 次回同期時、保存済 ts が Slack 側と一致すれば PATCH をスキップ → Slack 未編集の間は Notion 側の手動編集 (区分・内容・写真等) を保護
+- Slack で再編集された投稿は追随して上書き
 
 ## 同期方式
 
@@ -65,7 +74,7 @@ GitHub Actions cron (1時間おき) で `conversations.history` を叩き、前�
 
 - [x] Notion DB作成
 - [x] リポジトリ作成
-- [ ] Slack Bot作成・トークン発行
-- [ ] Notion Integration作成・DB共有
-- [ ] 同期スクリプト実装
-- [ ] GitHub Actions ワークフロー
+- [x] Slack Bot作成・トークン発行
+- [x] Notion Integration作成・DB共有
+- [x] 同期スクリプト実装
+- [x] GitHub Actions ワークフロー
