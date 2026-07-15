@@ -2,8 +2,8 @@ name: sync
 
 on:
   schedule:
-    # 1時間おき (UTC)
-    - cron: "0 * * * *"
+    # JST 6:00-24:00 のみ毎時 (UTC 21-23, 0-15)。深夜1-5時 (JST) はスキップ
+    - cron: "0 21-23,0-15 * * *"
   workflow_dispatch:
     inputs:
       lookback_hours:
