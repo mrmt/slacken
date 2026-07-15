@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## プロジェクト概要
 
-Slack `#food` チャンネルへの食事投稿を Notion DB「食事記録」に取り込み、健康診断結果をふまえた食事アドバイス・評価を Slack に返すツール。GitHub Actions cron で同期 (JST 6:00-24:00 の毎時) とアドバイス (JST 7/12/17 時) を実行。詳細な仕様・DB構造・区分判定ルールは `README.md` を参照。
+Slack `#food` チャンネルへの食事投稿を Notion DB「食事記録」に取り込み、健康診断結果をふまえた食事アドバイス・評価を Slack に返すツール。GitHub Actions cron で同期 (JST 6:00-24:00 の毎時) とアドバイス (JST 6/12/17 時) を実行。詳細な仕様・DB構造・区分判定ルールは `README.md` を参照。
 
 ## コマンド
 

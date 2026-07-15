@@ -2,8 +2,8 @@ name: advise
 
 on:
   schedule:
-    # JST 7:00 (UTC 22:00 前日) → 朝食
-    - cron: "0 22 * * *"
+    # JST 6:00 (UTC 21:00 前日) → 朝食
+    - cron: "0 21 * * *"
     # JST 12:00 (UTC 3:00) → 昼食
     - cron: "0 3 * * *"
     # JST 17:00 (UTC 8:00) → 夕食
@@ -41,7 +41,7 @@ jobs:
             echo "meal=${{ inputs.meal }}" >> "$GITHUB_OUTPUT"
           else
             case "${{ github.event.schedule }}" in
-              "0 22 * * *") echo "meal=朝食" >> "$GITHUB_OUTPUT" ;;
+              "0 21 * * *") echo "meal=朝食" >> "$GITHUB_OUTPUT" ;;
               "0 3 * * *")  echo "meal=昼食" >> "$GITHUB_OUTPUT" ;;
               "0 8 * * *")  echo "meal=夕食" >> "$GITHUB_OUTPUT" ;;
               *) echo "unknown schedule"; exit 1 ;;
