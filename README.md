@@ -6,7 +6,7 @@ Slack `#food` チャンネルへの食事投稿を、Notion DBに自動取り込
 
 - 対象: Slack ワークスペース `shakuji.slack.com` の `#food` チャンネル
 - 蓄積先: Notion DB「食事記録」 (Diet Teamspace / 「21世紀の体重異常者」配下)
-- 実行方式: GitHub Actions cron (1時間おき)
+- 実行方式: GitHub Actions cron (JST 6:00-24:00 のみ毎時、深夜帯はスキップ)
 
 ## Notion DB 構造
 
@@ -60,9 +60,9 @@ DB URL: <https://app.notion.com/p/b12824e541a7443bbd804ed58dd13f12>
 
 ## 同期方式
 
-GitHub Actions cron (1時間おき) で `conversations.history` を叩き、前回同期以降の差分を処理する。
+GitHub Actions cron で `conversations.history` を叩き、前回同期以降の差分を処理する。実行時間帯は JST 6:00-24:00 の毎時 (深夜 1:00-5:00 はスキップ、19回/日)。
 
-要件は「4時間おきでOK」だが、編集追随の観点で1時間間隔を採用。
+要件は「4時間おきでOK」だが、編集追随の観点で活動時間帯は1時間間隔を採用。
 
 ## 必要な認証情報 (GitHub Secrets)
 

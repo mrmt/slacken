@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## プロジェクト概要
 
-Slack `#food` チャンネルへの食事投稿を Notion DB「食事記録」に取り込むツール。GitHub Actions cron (1時間おき) で `slacken/main.py` を実行する。詳細な仕様・DB構造・区分判定ルールは `README.md` を参照。
+Slack `#food` チャンネルへの食事投稿を Notion DB「食事記録」に取り込むツール。GitHub Actions cron (JST 6:00-24:00 の毎時) で `slacken/main.py` を実行する。詳細な仕様・DB構造・区分判定ルールは `README.md` を参照。
 
 ## コマンド
 
@@ -34,7 +34,7 @@ Slack `#food` チャンネルへの食事投稿を Notion DB「食事記録」�
 
 - **Upsert キーは Slack permalink** (`Slack投稿元` プロパティ)。編集された投稿にも追随する
 - **Gemini 呼び出しは指数バックオフでリトライ** (429/500/503、最大8回・最大60秒待機)。1件の一時エラーで同期全体が落ちないよう `process_message` レベルでも例外catch
-- **cron は1時間おき**。要件は「4時間おきで可」だが編集追随のため短めに設定 (README記載)
+- **cron は JST 6:00-24:00 の毎時** (深夜1-5時はスキップ、19回/日)。要件は「4時間おきで可」だが編集追随のため活動時間帯は1時間間隔 (README記載)
 - **JST固定** (`Asia/Tokyo`)。時間帯による区分判定・日付計算は全てJSTで行う
 - **依存は Notion 公式SDKを使わず requests 直叩き**。Notionプロパティ名は日本語 (「名前」「日付」「区分」「内容」「写真」「Slack投稿元」「Slack最終編集」「取込元」)
 - **Notion手動編集の保護**: `Slack最終編集` に Slack 側の最終編集ts を保存し、次回同期時に一致すれば PATCH スキップ
