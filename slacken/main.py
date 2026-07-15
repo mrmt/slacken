@@ -186,6 +186,39 @@ def analyze_image(client: genai.Client, image_bytes: bytes, media_type: str) -> 
             raise
 
 
+def notion_upload_file(image_bytes: bytes, filename: str, mime: str) -> str | None:
+    """Notion File Upload API で画像をアップロードし file_upload id を返す。失敗時 None"""
+    try:
+        r = requests.post(
+            f"{NOTION_API}/file_uploads",
+            headers=NOTION_HEADERS,
+            json={"filename": filename, "content_type": mime},
+            timeout=30,
+        )
+        r.raise_for_status()
+        info = r.json()
+        upload_url = info["upload_url"]
+        file_upload_id = info["id"]
+        # 認証は同じ Bearer、multipart/form-data で送信 (Content-Type は自動設定させる)
+        headers = {
+            "Authorization": NOTION_HEADERS["Authorization"],
+            "Notion-Version": NOTION_HEADERS["Notion-Version"],
+        }
+        r2 = requests.post(
+            upload_url,
+            headers=headers,
+            files={"file": (filename, image_bytes, mime)},
+            timeout=60,
+        )
+        if not r2.ok:
+            print(f"notion upload send error: {r2.status_code} {r2.text}", file=sys.stderr)
+            return None
+        return file_upload_id
+    except Exception as e:
+        print(f"notion upload failed for {filename}: {e}", file=sys.stderr)
+        return None
+
+
 def notion_find_by_permalink(permalink: str) -> tuple[str, str] | None:
     """permalinkでNotion既存レコード検索。(page_id, 既存のSlack最終編集ts) を返す"""
     r = requests.post(
@@ -215,8 +248,10 @@ def notion_upsert(
     content: str,
     source: str,
     slack_last_edit_ts: str,
+    photo_uploads: list[tuple[str, str]] | None = None,
 ) -> bool:
-    """Notionへupsert。スキップした場合 False、書き込んだ場合 True を返す"""
+    """Notionへupsert。スキップした場合 False、書き込んだ場合 True を返す。
+    photo_uploads は (file_upload_id, filename) のリスト"""
     found = notion_find_by_permalink(permalink)
     page_id = found[0] if found else None
     stored_ts = found[1] if found else ""
@@ -233,6 +268,13 @@ def notion_upsert(
         "取込元": {"select": {"name": source}},
         "Slack最終編集": {"rich_text": [{"text": {"content": slack_last_edit_ts}}]},
     }
+    if photo_uploads:
+        properties["写真"] = {
+            "files": [
+                {"type": "file_upload", "file_upload": {"id": fid}, "name": name}
+                for fid, name in photo_uploads
+            ]
+        }
     if page_id:
         r = requests.patch(
             f"{NOTION_API}/pages/{page_id}",
@@ -268,8 +310,9 @@ def process_message(
     ts_dt = dt.datetime.fromtimestamp(float(msg["ts"]), tz=JST)
     text = (msg.get("text") or "").strip()
 
-    # 画像解析
+    # 画像解析 + Notion へアップロード
     image_texts: list[str] = []
+    photo_uploads: list[tuple[str, str]] = []
     for f in msg.get("files") or []:
         mimetype = f.get("mimetype", "")
         if not mimetype.startswith("image/"):
@@ -279,7 +322,12 @@ def process_message(
             continue
         try:
             body, mt = download_slack_file(url)
-            image_texts.append(analyze_image(gemini_client, body, mt or mimetype))
+            effective_mime = mt or mimetype
+            image_texts.append(analyze_image(gemini_client, body, effective_mime))
+            filename = f.get("name") or "photo"
+            uploaded = notion_upload_file(body, filename, effective_mime)
+            if uploaded:
+                photo_uploads.append((uploaded, filename))
         except Exception as e:
             print(f"image analyze failed for {url}: {e}", file=sys.stderr)
 
@@ -308,7 +356,9 @@ def process_message(
     ]
     # Slack側の最終編集ts (編集済なら edited.ts、なければ投稿ts)
     slack_last_edit_ts = (msg.get("edited") or {}).get("ts") or msg["ts"]
-    wrote = notion_upsert(permalink, date, meal, content, source, slack_last_edit_ts)
+    wrote = notion_upsert(
+        permalink, date, meal, content, source, slack_last_edit_ts, photo_uploads
+    )
     if wrote:
         print(f"synced: {date} {meal} ({source}) {permalink}")
     else:
