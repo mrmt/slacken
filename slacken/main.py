@@ -16,6 +16,14 @@ from google.genai import errors as genai_errors
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
+from slacken.advisor import (
+    HEALTH_CONTEXT_PAGE_ID,
+    LOOKBACK_DAYS as ADVICE_LOOKBACK_DAYS,
+    fetch_page_text,
+    fetch_recent_records,
+    format_records,
+)
+
 SLACK_TOKEN = os.environ["SLACK_BOT_TOKEN"]
 NOTION_TOKEN = os.environ["NOTION_TOKEN"]
 GOOGLE_API_KEY = os.environ["GOOGLE_API_KEY"]
@@ -249,15 +257,15 @@ def notion_upsert(
     source: str,
     slack_last_edit_ts: str,
     photo_uploads: list[tuple[str, str]] | None = None,
-) -> bool:
-    """Notionへupsert。スキップした場合 False、書き込んだ場合 True を返す。
+) -> str:
+    """Notionへupsert。'created' / 'updated' / 'skipped' を返す。
     photo_uploads は (file_upload_id, filename) のリスト"""
     found = notion_find_by_permalink(permalink)
     page_id = found[0] if found else None
     stored_ts = found[1] if found else ""
     # Slack側の最終編集tsが前回同期時と同じなら、Notion手動編集を保護してスキップ
     if page_id and stored_ts == slack_last_edit_ts:
-        return False
+        return "skipped"
     title = f"{date.isoformat()} {meal}"
     properties = {
         "名前": {"title": [{"text": {"content": title}}]},
@@ -295,7 +303,62 @@ def notion_upsert(
     if not r.ok:
         print(f"notion error: {r.status_code} {r.text}", file=sys.stderr)
         r.raise_for_status()
-    return True
+    return "updated" if page_id else "created"
+
+
+EVAL_PROMPT_TMPL = (
+    "あなたはこの人専属の食事アドバイザーです。\n\n"
+    "【重要な背景: 健康診断結果の情報整理】\n"
+    "{health_context}\n\n"
+    "【直近{days}日間の食事記録 (今回分を含む)】\n"
+    "{records}\n\n"
+    "【今回投稿された食事】\n"
+    "- 日付: {date}\n"
+    "- 区分: {meal}\n"
+    "- 内容: {content}\n\n"
+    "今回の食事について、健康診断で指摘されている項目・直近の食事傾向をふまえ、"
+    "良い点と気になる点を短く評価してください。\n\n"
+    "出力条件:\n"
+    "- Slackに投稿するので250文字以内、簡潔に\n"
+    "- 前置き・自己紹介・締めの挨拶は不要、本文のみ\n"
+    "- Markdownの見出しやコードブロックは使わない (箇条書きは可)\n"
+)
+
+
+def evaluate_and_post(
+    slack: WebClient,
+    gemini_client: genai.Client,
+    channel_id: str,
+    thread_ts: str,
+    date: dt.date,
+    meal: str,
+    content: str,
+) -> None:
+    """新規登録された食事について評価コメントを生成し、元投稿にスレッド返信"""
+    try:
+        records = fetch_recent_records(ADVICE_LOOKBACK_DAYS)
+        health_context = fetch_page_text(HEALTH_CONTEXT_PAGE_ID)
+        prompt = EVAL_PROMPT_TMPL.format(
+            health_context=health_context or "(取得できず)",
+            days=ADVICE_LOOKBACK_DAYS,
+            records=format_records(records),
+            date=date.isoformat(),
+            meal=meal,
+            content=content[:1000],
+        )
+        resp = gemini_client.models.generate_content(
+            model=GEMINI_MODEL, contents=[prompt]
+        )
+        evaluation = (resp.text or "").strip()
+        if not evaluation:
+            return
+        slack.chat_postMessage(
+            channel=channel_id,
+            thread_ts=thread_ts,
+            text=f":memo: *{meal}評価*\n{evaluation}",
+        )
+    except Exception as e:
+        print(f"evaluation post failed: {e}", file=sys.stderr)
 
 
 def process_message(
@@ -356,13 +419,15 @@ def process_message(
     ]
     # Slack側の最終編集ts (編集済なら edited.ts、なければ投稿ts)
     slack_last_edit_ts = (msg.get("edited") or {}).get("ts") or msg["ts"]
-    wrote = notion_upsert(
+    result = notion_upsert(
         permalink, date, meal, content, source, slack_last_edit_ts, photo_uploads
     )
-    if wrote:
-        print(f"synced: {date} {meal} ({source}) {permalink}")
-    else:
-        print(f"skipped (unchanged): {permalink}")
+    print(f"{result}: {date} {meal} ({source}) {permalink}")
+    # 新規登録時のみ評価コメントを元投稿にスレッド返信
+    if result == "created":
+        evaluate_and_post(
+            slack, gemini_client, channel_id, msg["ts"], date, meal, content
+        )
 
 
 def main() -> None:
