@@ -1,0 +1,58 @@
+name: advise
+
+on:
+  schedule:
+    # JST 7:00 (UTC 22:00 前日) → 朝食
+    - cron: "0 22 * * *"
+    # JST 12:00 (UTC 3:00) → 昼食
+    - cron: "0 3 * * *"
+    # JST 17:00 (UTC 8:00) → 夕食
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+    inputs:
+      meal:
+        description: "アドバイス対象 (朝食/昼食/夕食)"
+        required: true
+        default: "朝食"
+        type: choice
+        options:
+          - 朝食
+          - 昼食
+          - 夕食
+
+jobs:
+  advise:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+
+      - name: install
+        run: uv sync --frozen
+
+      - name: determine meal
+        id: meal
+        run: |
+          if [ -n "${{ inputs.meal }}" ]; then
+            echo "meal=${{ inputs.meal }}" >> "$GITHUB_OUTPUT"
+          else
+            case "${{ github.event.schedule }}" in
+              "0 22 * * *") echo "meal=朝食" >> "$GITHUB_OUTPUT" ;;
+              "0 3 * * *")  echo "meal=昼食" >> "$GITHUB_OUTPUT" ;;
+              "0 8 * * *")  echo "meal=夕食" >> "$GITHUB_OUTPUT" ;;
+              *) echo "unknown schedule"; exit 1 ;;
+            esac
+          fi
+
+      - name: run advisor
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          NOTION_DATABASE_ID: ${{ vars.NOTION_DATABASE_ID }}
+          SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}
+        run: uv run slacken-advise --meal "${{ steps.meal.outputs.meal }}"
