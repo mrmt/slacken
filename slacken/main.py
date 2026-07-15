@@ -40,7 +40,7 @@ MEAL_KEYWORDS = {
 }
 
 # 日付指定パターン (例: 7/14, 7月14日)
-DATE_RE = re.compile(r"(\d{1,2})[/月](\d{1,2})")
+DATE_RE = re.compile(r"(\d{1,2})[/月](\d{1,2})日?")
 
 # 相対日付キーワード (投稿日からの日数オフセット)
 RELATIVE_DATE_KEYWORDS: list[tuple[int, tuple[str, ...]]] = [
@@ -81,6 +81,51 @@ def extract_date(text: str, ts_dt: dt.datetime) -> dt.date:
         if any(kw in text for kw in kws):
             return ts_dt.date() + dt.timedelta(days=offset)
     return ts_dt.date()
+
+
+def has_date_expression(text: str) -> bool:
+    """日付表現が含まれる可能性を軽く判定 (Gemini呼び出しの前段フィルタ)"""
+    if DATE_RE.search(text):
+        return True
+    for _, kws in RELATIVE_DATE_KEYWORDS:
+        if any(kw in text for kw in kws):
+            return True
+    return False
+
+
+STRIP_DATE_PROMPT = (
+    "以下は食事に関するSlack投稿の本文です。"
+    "「昨日」「今日」「一昨日」「今朝」「ゆうべ」等の相対日付表現、"
+    "および「7/14」「8月3日」等の日付指定を、それに付随する助詞ごと自然に取り除き、"
+    "食べたものの記述だけを残した文を返してください。"
+    "余計な整形・要約・解説はせず、元の文体を保ったまま最小限の削除のみ行ってください。"
+    "前置きや説明は付けず、修正後の本文だけを返してください。\n\n"
+    "本文:\n"
+)
+
+
+def strip_date_via_gemini(client: genai.Client, text: str) -> str:
+    """Geminiで日付表現を除去。失敗時は原文を返す (同期は落とさない)"""
+    if not has_date_expression(text):
+        return text
+    max_attempts = 5
+    for attempt in range(max_attempts):
+        try:
+            resp = client.models.generate_content(
+                model=GEMINI_MODEL, contents=[STRIP_DATE_PROMPT + text]
+            )
+            cleaned = (resp.text or "").strip()
+            return cleaned or text
+        except genai_errors.APIError as e:
+            code = getattr(e, "code", None)
+            if code in (429, 500, 503) and attempt < max_attempts - 1:
+                wait = min(2**attempt, 30) + random.random()
+                print(f"gemini strip {code}, retry in {wait:.1f}s", file=sys.stderr)
+                time.sleep(wait)
+                continue
+            print(f"gemini strip failed: {e}", file=sys.stderr)
+            return text
+    return text
 
 
 def resolve_channel_id(slack: WebClient, name: str) -> str:
@@ -241,18 +286,22 @@ def process_message(
     if not text and not image_texts:
         return  # 空投稿は無視
 
-    if text and image_texts:
+    # 判定は生テキストで行い、Notion保存用は Gemini で日付表現を除去
+    date = extract_date(text, ts_dt)
+    meal = classify_meal(text, ts_dt.hour)
+    cleaned_text = strip_date_via_gemini(gemini_client, text) if text else ""
+
+    if cleaned_text and image_texts:
         source = "テキスト+画像"
-        content = text + "\n\n[画像解析]\n" + "\n\n".join(image_texts)
+        content = cleaned_text + "\n\n[画像解析]\n" + "\n\n".join(image_texts)
     elif image_texts:
         source = "画像解析"
         content = "\n\n".join(image_texts)
-    else:
+    elif cleaned_text:
         source = "テキスト"
-        content = text
-
-    date = extract_date(text, ts_dt)
-    meal = classify_meal(text, ts_dt.hour)
+        content = cleaned_text
+    else:
+        return  # 除去後に本文空・画像なしなら記録しない
 
     permalink = slack.chat_getPermalink(channel=channel_id, message_ts=msg["ts"])[
         "permalink"
