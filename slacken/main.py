@@ -71,8 +71,8 @@ def extract_date(text: str, ts_dt: dt.datetime) -> dt.date:
         month, day = int(m.group(1)), int(m.group(2))
         try:
             candidate = dt.date(ts_dt.year, month, day)
-            # 未来日は前年扱い (年末→年始の投稿対策)
-            if candidate > ts_dt.date() + dt.timedelta(days=1):
+            # 遠い未来日 (半年超) は前年扱い (年末→年始の投稿対策)
+            if candidate > ts_dt.date() + dt.timedelta(days=180):
                 candidate = dt.date(ts_dt.year - 1, month, day)
             return candidate
         except ValueError:
