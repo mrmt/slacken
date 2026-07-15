@@ -19,6 +19,10 @@ NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
 SLACK_CHANNEL = os.environ.get("SLACK_CHANNEL", "food")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
 LOOKBACK_DAYS = int(os.environ.get("ADVICE_LOOKBACK_DAYS", "14"))
+# 健康診断結果の情報整理ページ (背景コンテキスト)
+HEALTH_CONTEXT_PAGE_ID = os.environ.get(
+    "HEALTH_CONTEXT_PAGE_ID", "39b29ec6bc9b80aabccbc02eac1b6dbd"
+)
 
 JST = ZoneInfo("Asia/Tokyo")
 NOTION_API = "https://api.notion.com/v1"
@@ -73,6 +77,62 @@ def fetch_recent_records(days: int) -> list[dict]:
     return records
 
 
+def fetch_page_text(page_id: str) -> str:
+    """Notionページの本文をブロック走査で平文化 (再帰、主要ブロック型に対応)"""
+    # よく使うブロックのうち rich_text を持つもの
+    RICH_TEXT_TYPES = {
+        "paragraph",
+        "heading_1",
+        "heading_2",
+        "heading_3",
+        "bulleted_list_item",
+        "numbered_list_item",
+        "to_do",
+        "toggle",
+        "quote",
+        "callout",
+        "code",
+    }
+    lines: list[str] = []
+
+    def walk(block_id: str, depth: int = 0) -> None:
+        cursor: str | None = None
+        while True:
+            params = {"page_size": 100}
+            if cursor:
+                params["start_cursor"] = cursor
+            r = requests.get(
+                f"{NOTION_API}/blocks/{block_id}/children",
+                headers=NOTION_HEADERS,
+                params=params,
+                timeout=30,
+            )
+            if not r.ok:
+                print(
+                    f"notion page fetch error: {r.status_code} {r.text}",
+                    file=sys.stderr,
+                )
+                return
+            data = r.json()
+            for b in data.get("results", []):
+                btype = b.get("type")
+                body = b.get(btype, {}) if btype else {}
+                if btype in RICH_TEXT_TYPES:
+                    text = "".join(
+                        rt.get("plain_text", "") for rt in body.get("rich_text", [])
+                    )
+                    if text.strip():
+                        lines.append("  " * depth + text)
+                if b.get("has_children"):
+                    walk(b["id"], depth + 1)
+            if not data.get("has_more"):
+                break
+            cursor = data.get("next_cursor")
+
+    walk(page_id)
+    return "\n".join(lines)
+
+
 def format_records(records: list[dict]) -> str:
     """プロンプト用に食事記録をテキスト化"""
     if not records:
@@ -84,21 +144,31 @@ def format_records(records: list[dict]) -> str:
 
 
 ADVICE_PROMPT_TMPL = (
-    "あなたは食事アドバイザーです。以下は直近{days}日間の食事記録です。\n\n"
+    "あなたはこの人専属の食事アドバイザーです。\n\n"
+    "【重要な背景: 健康診断結果の情報整理】\n"
+    "{health_context}\n\n"
+    "【直近{days}日間の食事記録】\n"
     "{records}\n\n"
-    "この履歴をふまえて、これから食べる「本日の{meal}」への提案を、"
-    "栄養バランス・不足しがちな食材・食べ過ぎている傾向などの観点で考えてください。\n\n"
+    "上記の健康状態と食事履歴をふまえて、これから食べる「本日の{meal}」への提案を、"
+    "健康診断で指摘されている項目の改善・栄養バランス・不足しがちな食材・"
+    "食べ過ぎている傾向などの観点で考えてください。\n\n"
     "出力条件:\n"
     "- Slackに投稿するので300文字以内、簡潔に\n"
     "- 具体的なメニュー案を1〜2個含める\n"
+    "- 健康診断結果と関連する提案は理由を短く添える\n"
     "- 前置き・自己紹介・締めの挨拶は不要、本文のみ\n"
     "- Markdownの見出しやコードブロックは使わない (箇条書きは可)\n"
 )
 
 
-def generate_advice(client: genai.Client, meal: str, records: list[dict]) -> str:
+def generate_advice(
+    client: genai.Client, meal: str, records: list[dict], health_context: str
+) -> str:
     prompt = ADVICE_PROMPT_TMPL.format(
-        days=LOOKBACK_DAYS, records=format_records(records), meal=meal
+        health_context=health_context or "(取得できず)",
+        days=LOOKBACK_DAYS,
+        records=format_records(records),
+        meal=meal,
     )
     resp = client.models.generate_content(model=GEMINI_MODEL, contents=[prompt])
     return (resp.text or "").strip()
@@ -123,7 +193,9 @@ def main() -> None:
 
     records = fetch_recent_records(LOOKBACK_DAYS)
     print(f"fetched {len(records)} records for last {LOOKBACK_DAYS} days")
-    advice = generate_advice(gemini_client, args.meal, records)
+    health_context = fetch_page_text(HEALTH_CONTEXT_PAGE_ID)
+    print(f"fetched health context: {len(health_context)} chars")
+    advice = generate_advice(gemini_client, args.meal, records, health_context)
     if not advice:
         print("no advice generated, skipping post", file=sys.stderr)
         return
