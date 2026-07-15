@@ -1,12 +1,14 @@
 # slacken
 
-Slack `#food` チャンネルへの食事投稿を、Notion DBに自動取り込みするツール。健康管理用の食事ログを蓄積する。
+Slack `#food` チャンネルへの食事投稿を Notion DB に自動取り込みし、健康診断結果をふまえた食事アドバイス・評価を Slack に返すツール。
 
 ## 概要
 
 - 対象: Slack ワークスペース `shakuji.slack.com` の `#food` チャンネル
 - 蓄積先: Notion DB「食事記録」 (Diet Teamspace / 「21世紀の体重異常者」配下)
-- 実行方式: GitHub Actions cron (JST 6:00-24:00 のみ毎時、深夜帯はスキップ)
+- 実行方式:
+  - **同期** (`slacken`): GitHub Actions cron (JST 6:00-24:00 のみ毎時、深夜帯はスキップ)
+  - **アドバイス** (`slacken-advise`): GitHub Actions cron (JST 7:00 朝食 / 12:00 昼食 / 17:00 夕食)
 
 ## Notion DB 構造
 
@@ -57,6 +59,27 @@ DB URL: <https://app.notion.com/p/b12824e541a7443bbd804ed58dd13f12>
 - Slackメッセージの最終編集ts (`edited.ts` or 投稿ts) を `Slack最終編集` に保存
 - 次回同期時、保存済 ts が Slack 側と一致すれば PATCH をスキップ → Slack 未編集の間は Notion 側の手動編集 (区分・内容・写真等) を保護
 - Slack で再編集された投稿は追随して上書き
+- 新規追加時 (`created`) は元の Slack 投稿にスレッド返信で個別評価コメントを自動投稿
+
+## アドバイス / 評価
+
+### 定時アドバイス (`slacken-advise`)
+
+- JST 7:00 (朝食) / 12:00 (昼食) / 17:00 (夕食) に自動実行、`#food` に投稿
+- 直近 `ADVICE_LOOKBACK_DAYS` 日 (既定14日) の食事記録 + 健康診断コンテキストを Gemini に投入
+- これから食べる該当区分への提案 (300文字以内、メニュー案含む)
+- `workflow_dispatch` で任意区分を手動 trigger 可能
+
+### 新規食事の個別評価
+
+- 同期スクリプトが新規レコードを作成した際に、Gemini で当該食事を評価し、元の Slack 投稿へスレッド返信 (250文字以内)
+- 更新 (`updated`) / スキップ (`skipped`) 時は投稿しない
+
+### 健康診断コンテキスト
+
+- Notion ページ「健康診断結果の情報整理」を Blocks API で走査し、平文化してプロンプトの背景に注入
+- ページ ID は環境変数 `HEALTH_CONTEXT_PAGE_ID` で上書き可 (既定は当該ページ)
+- 該当ページを Notion Integration に共有しておく必要あり
 
 ## 同期方式
 
@@ -64,11 +87,13 @@ GitHub Actions cron で `conversations.history` を叩き、前回同期以降�
 
 要件は「4時間おきでOK」だが、編集追随の観点で活動時間帯は1時間間隔を採用。
 
-## 必要な認証情報 (GitHub Secrets)
+## 必要な認証情報 (GitHub Secrets / Variables)
 
-- `SLACK_BOT_TOKEN` — `#food` の読み取り権限 (`channels:history`, `files:read`)
-- `NOTION_TOKEN` — 食事記録DBへの読み書き権限
-- `GOOGLE_API_KEY` — 画像解析用 (Gemini)
+- `SLACK_BOT_TOKEN` (Secret) — `#food` の読み書き権限 (`channels:history`, `files:read`, `chat:write`)
+- `NOTION_TOKEN` (Secret) — 食事記録DB・健康診断結果ページへの読み書き権限
+- `GOOGLE_API_KEY` (Secret) — Gemini (画像解析・日付表現除去・アドバイス・評価生成)
+- `NOTION_DATABASE_ID` (Variable) — 食事記録DBのID
+- `SLACK_CHANNEL` (Variable) — 投稿先チャンネル名 (通常 `food`)
 
 ## 実装状況
 
