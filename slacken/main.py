@@ -42,6 +42,13 @@ MEAL_KEYWORDS = {
 # 日付指定パターン (例: 7/14, 7月14日)
 DATE_RE = re.compile(r"(\d{1,2})[/月](\d{1,2})")
 
+# 相対日付キーワード (投稿日からの日数オフセット)
+RELATIVE_DATE_KEYWORDS: list[tuple[int, tuple[str, ...]]] = [
+    (-2, ("一昨日", "おととい", "おとつい")),
+    (-1, ("昨日", "きのう", "ゆうべ", "夕べ", "昨夜", "昨晩")),
+    (0, ("今日", "本日", "けさ", "今朝", "今晩", "今夜")),
+]
+
 
 def classify_meal(text: str, hour: int) -> str:
     """本文キーワード優先、なければ時間帯で区分判定"""
@@ -70,6 +77,9 @@ def extract_date(text: str, ts_dt: dt.datetime) -> dt.date:
             return candidate
         except ValueError:
             pass
+    for offset, kws in RELATIVE_DATE_KEYWORDS:
+        if any(kw in text for kw in kws):
+            return ts_dt.date() + dt.timedelta(days=offset)
     return ts_dt.date()
 
 
