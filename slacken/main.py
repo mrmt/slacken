@@ -227,14 +227,31 @@ def notion_upload_file(image_bytes: bytes, filename: str, mime: str) -> str | No
         return None
 
 
+def _archive_notion_page(page_id: str) -> None:
+    """Notionページをアーカイブ (重複レコード掃除用)"""
+    try:
+        r = requests.patch(
+            f"{NOTION_API}/pages/{page_id}",
+            headers=NOTION_HEADERS,
+            json={"archived": True},
+            timeout=30,
+        )
+        r.raise_for_status()
+        print(f"archived duplicate page: {page_id}", file=sys.stderr)
+    except Exception as e:
+        print(f"archive failed for {page_id}: {e}", file=sys.stderr)
+
+
 def notion_find_by_permalink(permalink: str) -> tuple[str, str] | None:
-    """permalinkでNotion既存レコード検索。(page_id, 既存のSlack最終編集ts) を返す"""
+    """permalinkでNotion既存レコード検索。(page_id, 既存のSlack最終編集ts) を返す。
+    同一permalinkが複数存在した場合 (並行実行race等) は最古1件を残し他はアーカイブする"""
     r = requests.post(
         f"{NOTION_API}/databases/{NOTION_DATABASE_ID}/query",
         headers=NOTION_HEADERS,
         json={
             "filter": {"property": "Slack投稿元", "url": {"equals": permalink}},
-            "page_size": 1,
+            "sorts": [{"timestamp": "created_time", "direction": "ascending"}],
+            "page_size": 10,
         },
         timeout=30,
     )
@@ -243,6 +260,8 @@ def notion_find_by_permalink(permalink: str) -> tuple[str, str] | None:
     if not results:
         return None
     page = results[0]
+    for dup in results[1:]:
+        _archive_notion_page(dup["id"])
     prop = page.get("properties", {}).get("Slack最終編集", {})
     rich = prop.get("rich_text") or []
     stored_ts = rich[0].get("plain_text", "") if rich else ""

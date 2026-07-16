@@ -11,6 +11,12 @@ on:
         required: false
         default: "168"
 
+# 同一permalinkに対する重複POSTを防ぐため同時実行を1本に絞る
+# (cron と手動 workflow_dispatch の並走で Notion 側にレコード重複が発生していた)
+concurrency:
+  group: slacken-sync
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest
