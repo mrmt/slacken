@@ -276,15 +276,15 @@ def notion_upsert(
     source: str,
     slack_last_edit_ts: str,
     photo_uploads: list[tuple[str, str]] | None = None,
-) -> str:
-    """Notionへupsert。'created' / 'updated' / 'skipped' を返す。
+) -> tuple[str, str | None]:
+    """Notionへupsert。('created'|'updated'|'skipped', page_url or None) を返す。
     photo_uploads は (file_upload_id, filename) のリスト"""
     found = notion_find_by_permalink(permalink)
     page_id = found[0] if found else None
     stored_ts = found[1] if found else ""
     # Slack側の最終編集tsが前回同期時と同じなら、Notion手動編集を保護してスキップ
     if page_id and stored_ts == slack_last_edit_ts:
-        return "skipped"
+        return "skipped", None
     title = f"{date.isoformat()} {meal}"
     properties = {
         "名前": {"title": [{"text": {"content": title}}]},
@@ -322,7 +322,8 @@ def notion_upsert(
     if not r.ok:
         print(f"notion error: {r.status_code} {r.text}", file=sys.stderr)
         r.raise_for_status()
-    return "updated" if page_id else "created"
+    page_url = r.json().get("url")
+    return ("updated" if page_id else "created"), page_url
 
 
 EVAL_PROMPT_TMPL = (
@@ -438,12 +439,22 @@ def process_message(
     ]
     # Slack側の最終編集ts (編集済なら edited.ts、なければ投稿ts)
     slack_last_edit_ts = (msg.get("edited") or {}).get("ts") or msg["ts"]
-    result = notion_upsert(
+    result, page_url = notion_upsert(
         permalink, date, meal, content, source, slack_last_edit_ts, photo_uploads
     )
-    print(f"{result}: {date} {meal} ({source}) {permalink}")
-    # 新規登録時のみ評価コメントを元投稿にスレッド返信
+    print(f"{result}: {date} {meal} ({source}) {permalink} -> {page_url}")
+    # 新規登録時のみ Notion ページURLと評価コメントを元投稿にスレッド返信
     if result == "created":
+        if page_url:
+            try:
+                slack.chat_postMessage(
+                    channel=channel_id,
+                    thread_ts=msg["ts"],
+                    text=f":card_index: Notionに登録しました: {page_url}",
+                    unfurl_links=False,
+                )
+            except Exception as e:
+                print(f"notion url post failed: {e}", file=sys.stderr)
         evaluate_and_post(
             slack, gemini_client, channel_id, msg["ts"], date, meal, content
         )
