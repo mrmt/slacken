@@ -2,12 +2,13 @@ name: advise
 
 on:
   schedule:
-    # JST 6:00 (UTC 21:00 前日) → 朝食
-    - cron: "0 21 * * *"
-    # JST 12:00 (UTC 3:00) → 昼食
-    - cron: "0 3 * * *"
-    # JST 17:00 (UTC 8:00) → 夕食
-    - cron: "0 8 * * *"
+    # 毎時0分はGitHub Actions側の高負荷で遅延・スキップされやすいため3分にずらす
+    # JST 6:03 (UTC 21:03 前日) → 朝食
+    - cron: "3 21 * * *"
+    # JST 12:03 (UTC 3:03) → 昼食
+    - cron: "3 3 * * *"
+    # JST 17:03 (UTC 8:03) → 夕食
+    - cron: "3 8 * * *"
   workflow_dispatch:
     inputs:
       meal:
@@ -41,9 +42,9 @@ jobs:
             echo "meal=${{ inputs.meal }}" >> "$GITHUB_OUTPUT"
           else
             case "${{ github.event.schedule }}" in
-              "0 21 * * *") echo "meal=朝食" >> "$GITHUB_OUTPUT" ;;
-              "0 3 * * *")  echo "meal=昼食" >> "$GITHUB_OUTPUT" ;;
-              "0 8 * * *")  echo "meal=夕食" >> "$GITHUB_OUTPUT" ;;
+              "3 21 * * *") echo "meal=朝食" >> "$GITHUB_OUTPUT" ;;
+              "3 3 * * *")  echo "meal=昼食" >> "$GITHUB_OUTPUT" ;;
+              "3 8 * * *")  echo "meal=夕食" >> "$GITHUB_OUTPUT" ;;
               *) echo "unknown schedule"; exit 1 ;;
             esac
           fi

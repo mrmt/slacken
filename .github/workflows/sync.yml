@@ -3,7 +3,8 @@ name: sync
 on:
   schedule:
     # JST 6:00-24:00 のみ毎時 (UTC 21-23, 0-15)。深夜1-5時 (JST) はスキップ
-    - cron: "0 21-23,0-15 * * *"
+    # 毎時0分はGitHub Actions側の高負荷で遅延・スキップされやすいため3分にずらす
+    - cron: "3 21-23,0-15 * * *"
   workflow_dispatch:
     inputs:
       lookback_hours:
