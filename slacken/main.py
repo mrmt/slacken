@@ -31,6 +31,15 @@ NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
 SLACK_CHANNEL = os.environ.get("SLACK_CHANNEL", "food")
 LOOKBACK_HOURS = int(os.environ.get("LOOKBACK_HOURS", "168"))  # 7日間
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+GEMINI_IMAGE_MODEL = os.environ.get("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
+
+# 評価イラストの画風 (毎回ランダムに1つ選ぶ)
+EVAL_IMAGE_STYLES = [
+    "水彩画風、淡い色調、やわらかい筆致",
+    "レトロなドット絵、16bit時代のRPG風、シンプルなパレット",
+    "ゆるいイラスト、手描き風、パステルカラー、フラットデザイン",
+    "写実的な絵画、油彩画風、豊かな陰影",
+]
 
 JST = ZoneInfo("Asia/Tokyo")
 NOTION_API = "https://api.notion.com/v1"
@@ -383,11 +392,47 @@ EVAL_PROMPT_TMPL = (
 )
 
 
-def notion_update_evaluation(page_id: str, evaluation: str) -> None:
+def generate_evaluation_image(
+    client: genai.Client, evaluation: str, meal: str
+) -> tuple[bytes, str, str] | None:
+    """評価テキストを可視化したイラストを Gemini で生成。(bytes, mime, style) or None。
+    画風は EVAL_IMAGE_STYLES からランダムに選択。画像内に文字は入れない"""
+    style = random.choice(EVAL_IMAGE_STYLES)
+    prompt = (
+        f"以下の食事に対する評価コメントを、比喩的・情緒的に表現するイラストを1枚生成してください。\n"
+        f"画風: {style}\n"
+        f"重要な制約: 画像内には日本語・英語問わず一切の文字・数字・記号・ラベルを描画しないこと。\n"
+        f"料理そのものを描くのではなく、評価の雰囲気 (ポジティブ/ネガティブ、ヘルシー/リッチ 等) を"
+        f"色彩・構図・モチーフで象徴的に表現してください。\n\n"
+        f"食事区分: {meal}\n"
+        f"評価コメント:\n{evaluation[:800]}"
+    )
+    try:
+        resp = client.models.generate_content(
+            model=GEMINI_IMAGE_MODEL,
+            contents=[prompt],
+        )
+    except Exception as e:
+        print(f"gemini image gen failed: {e}", file=sys.stderr)
+        return None
+    for cand in resp.candidates or []:
+        parts = getattr(cand.content, "parts", None) or []
+        for p in parts:
+            inline = getattr(p, "inline_data", None)
+            if inline and getattr(inline, "data", None):
+                return inline.data, (inline.mime_type or "image/png"), style
+    print("gemini image gen: no inline_data in response", file=sys.stderr)
+    return None
+
+
+def notion_update_evaluation(
+    page_id: str, evaluation: str, image: tuple[bytes, str] | None = None
+) -> None:
     """Notionページ本文に評価結果を段落ブロックで追記する。
+    image が指定されていれば Notion File Upload 経由で画像ブロックも追記。
     Notion rich_text の1要素あたり2000文字上限に合わせて分割"""
     chunks = [evaluation[i : i + 1900] for i in range(0, len(evaluation), 1900)] or [""]
-    children = [
+    children: list[dict] = [
         {
             "object": "block",
             "type": "paragraph",
@@ -397,6 +442,21 @@ def notion_update_evaluation(page_id: str, evaluation: str) -> None:
         }
         for chunk in chunks
     ]
+    if image is not None:
+        img_bytes, img_mime = image
+        ext = "png" if "png" in img_mime else ("jpg" if "jpeg" in img_mime else "img")
+        upload_id = notion_upload_file(img_bytes, f"evaluation.{ext}", img_mime)
+        if upload_id:
+            children.append(
+                {
+                    "object": "block",
+                    "type": "image",
+                    "image": {
+                        "type": "file_upload",
+                        "file_upload": {"id": upload_id},
+                    },
+                }
+            )
     r = requests.patch(
         f"{NOTION_API}/blocks/{page_id}/children",
         headers=NOTION_HEADERS,
@@ -436,14 +496,35 @@ def evaluate_and_post(
         evaluation = (resp.text or "").strip()
         if not evaluation:
             return
-        slack.chat_postMessage(
-            channel=channel_id,
-            thread_ts=thread_ts,
-            text=f":memo: *{meal}評価*\n{evaluation}",
-        )
+        image = generate_evaluation_image(gemini_client, evaluation, meal)
+        slack_text = f":memo: *{meal}評価*\n{evaluation}"
+        posted = False
+        if image is not None:
+            img_bytes, img_mime, _style = image
+            ext = "png" if "png" in img_mime else ("jpg" if "jpeg" in img_mime else "img")
+            try:
+                slack.files_upload_v2(
+                    channel=channel_id,
+                    thread_ts=thread_ts,
+                    initial_comment=slack_text,
+                    content=img_bytes,
+                    filename=f"evaluation.{ext}",
+                    title=f"{meal}評価イラスト",
+                )
+                posted = True
+            except SlackApiError as e:
+                print(f"slack files_upload_v2 failed: {e}", file=sys.stderr)
+        if not posted:
+            slack.chat_postMessage(
+                channel=channel_id, thread_ts=thread_ts, text=slack_text
+            )
         if page_id:
             try:
-                notion_update_evaluation(page_id, evaluation)
+                notion_update_evaluation(
+                    page_id,
+                    evaluation,
+                    image=(image[0], image[1]) if image is not None else None,
+                )
             except Exception as e:
                 print(f"notion evaluation write failed: {e}", file=sys.stderr)
     except Exception as e:
