@@ -137,6 +137,40 @@ def strip_date_via_gemini(client: genai.Client, text: str) -> str:
     return text
 
 
+SUMMARIZE_PROMPT = (
+    "以下は食事内容の記述です。日本語で20文字未満に要約してください。"
+    "料理名を優先的に含め、句読点や記号は極力使わず、体言止めで簡潔にしてください。"
+    "前置き・引用符・説明は不要、要約文だけを返してください。\n\n"
+    "本文:\n"
+)
+
+
+def summarize_content(client: genai.Client, text: str) -> str:
+    """Geminiで食事内容を20文字未満に要約。失敗時は先頭20文字を返す (同期は落とさない)"""
+    fallback = text.strip().splitlines()[0][:19] if text.strip() else ""
+    max_attempts = 5
+    for attempt in range(max_attempts):
+        try:
+            resp = client.models.generate_content(
+                model=GEMINI_MODEL, contents=[SUMMARIZE_PROMPT + text]
+            )
+            summary = (resp.text or "").strip().strip("「」\"'`")
+            summary = summary.splitlines()[0] if summary else ""
+            if summary:
+                return summary[:19]
+            return fallback
+        except genai_errors.APIError as e:
+            code = getattr(e, "code", None)
+            if code in (429, 500, 503) and attempt < max_attempts - 1:
+                wait = min(2**attempt, 30) + random.random()
+                print(f"gemini summarize {code}, retry in {wait:.1f}s", file=sys.stderr)
+                time.sleep(wait)
+                continue
+            print(f"gemini summarize failed: {e}", file=sys.stderr)
+            return fallback
+    return fallback
+
+
 def resolve_channel_id(slack: WebClient, name: str) -> str:
     """チャンネル名 → ID解決 (privateチャンネル含む)"""
     if name.startswith("C") or name.startswith("G"):
@@ -277,17 +311,17 @@ def notion_upsert(
     content: str,
     source: str,
     slack_last_edit_ts: str,
+    title: str,
     photo_uploads: list[tuple[str, str]] | None = None,
-) -> tuple[str, str | None]:
-    """Notionへupsert。('created'|'updated'|'skipped', page_url or None) を返す。
+) -> tuple[str, str | None, str | None]:
+    """Notionへupsert。('created'|'updated'|'skipped', page_url or None, page_id or None) を返す。
     photo_uploads は (file_upload_id, filename) のリスト"""
     found = notion_find_by_permalink(permalink)
     page_id = found[0] if found else None
     stored_ts = found[1] if found else ""
     # Slack側の最終編集tsが前回同期時と同じなら、Notion手動編集を保護してスキップ
     if page_id and stored_ts == slack_last_edit_ts:
-        return "skipped", None
-    title = f"{date.isoformat()} {meal}"
+        return "skipped", None, page_id
     properties = {
         "名前": {"title": [{"text": {"content": title}}]},
         "日付": {"date": {"start": date.isoformat()}},
@@ -324,8 +358,10 @@ def notion_upsert(
     if not r.ok:
         print(f"notion error: {r.status_code} {r.text}", file=sys.stderr)
         r.raise_for_status()
-    page_url = r.json().get("url")
-    return ("updated" if page_id else "created"), page_url
+    body = r.json()
+    page_url = body.get("url")
+    new_page_id = body.get("id") or page_id
+    return ("updated" if page_id else "created"), page_url, new_page_id
 
 
 EVAL_PROMPT_TMPL = (
@@ -347,6 +383,31 @@ EVAL_PROMPT_TMPL = (
 )
 
 
+def notion_update_evaluation(page_id: str, evaluation: str) -> None:
+    """Notionページ本文に評価結果を段落ブロックで追記する。
+    Notion rich_text の1要素あたり2000文字上限に合わせて分割"""
+    chunks = [evaluation[i : i + 1900] for i in range(0, len(evaluation), 1900)] or [""]
+    children = [
+        {
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [{"type": "text", "text": {"content": chunk}}]
+            },
+        }
+        for chunk in chunks
+    ]
+    r = requests.patch(
+        f"{NOTION_API}/blocks/{page_id}/children",
+        headers=NOTION_HEADERS,
+        json={"children": children},
+        timeout=30,
+    )
+    if not r.ok:
+        print(f"notion evaluation append failed: {r.status_code} {r.text}", file=sys.stderr)
+        r.raise_for_status()
+
+
 def evaluate_and_post(
     slack: WebClient,
     gemini_client: genai.Client,
@@ -355,6 +416,7 @@ def evaluate_and_post(
     date: dt.date,
     meal: str,
     content: str,
+    page_id: str | None,
 ) -> None:
     """新規登録された食事について評価コメントを生成し、元投稿にスレッド返信"""
     try:
@@ -379,6 +441,11 @@ def evaluate_and_post(
             thread_ts=thread_ts,
             text=f":memo: *{meal}評価*\n{evaluation}",
         )
+        if page_id:
+            try:
+                notion_update_evaluation(page_id, evaluation)
+            except Exception as e:
+                print(f"notion evaluation write failed: {e}", file=sys.stderr)
     except Exception as e:
         print(f"evaluation post failed: {e}", file=sys.stderr)
 
@@ -443,8 +510,9 @@ def process_message(
     permalink = raw_permalink.split("?", 1)[0]
     # Slack側の最終編集ts (編集済なら edited.ts、なければ投稿ts)
     slack_last_edit_ts = (msg.get("edited") or {}).get("ts") or msg["ts"]
-    result, page_url = notion_upsert(
-        permalink, date, meal, content, source, slack_last_edit_ts, photo_uploads
+    title = summarize_content(gemini_client, content)
+    result, page_url, page_id = notion_upsert(
+        permalink, date, meal, content, source, slack_last_edit_ts, title, photo_uploads
     )
     print(f"{result}: {date} {meal} ({source}) {permalink} -> {page_url}")
     # 新規登録時のみ Notion ページURLと評価コメントを元投稿にスレッド返信
@@ -460,7 +528,7 @@ def process_message(
             except Exception as e:
                 print(f"notion url post failed: {e}", file=sys.stderr)
         evaluate_and_post(
-            slack, gemini_client, channel_id, msg["ts"], date, meal, content
+            slack, gemini_client, channel_id, msg["ts"], date, meal, content, page_id
         )
 
 
