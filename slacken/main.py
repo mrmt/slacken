@@ -249,7 +249,8 @@ def notion_find_by_permalink(permalink: str) -> tuple[str, str] | None:
         f"{NOTION_API}/databases/{NOTION_DATABASE_ID}/query",
         headers=NOTION_HEADERS,
         json={
-            "filter": {"property": "Slack投稿元", "url": {"equals": permalink}},
+            # スレッド化前後で ?thread_ts=... が付いた URL も既存レコードとして扱うため contains で検索
+            "filter": {"property": "Slack投稿元", "url": {"contains": permalink}},
             "sorts": [{"timestamp": "created_time", "direction": "ascending"}],
             "page_size": 10,
         },
@@ -434,9 +435,11 @@ def process_message(
     else:
         return  # 除去後に本文空・画像なしなら記録しない
 
-    permalink = slack.chat_getPermalink(channel=channel_id, message_ts=msg["ts"])[
+    raw_permalink = slack.chat_getPermalink(channel=channel_id, message_ts=msg["ts"])[
         "permalink"
     ]
+    # スレッド化後に thread_ts/cid クエリが付与されると別URL扱いで重複作成されるため正規化
+    permalink = raw_permalink.split("?", 1)[0]
     # Slack側の最終編集ts (編集済なら edited.ts、なければ投稿ts)
     slack_last_edit_ts = (msg.get("edited") or {}).get("ts") or msg["ts"]
     result, page_url = notion_upsert(
