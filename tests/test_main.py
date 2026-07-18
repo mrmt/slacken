@@ -8,6 +8,7 @@ from slacken.main import (
     classify_meal,
     extract_date,
     has_date_expression,
+    parse_evaluation,
 )
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -101,3 +102,48 @@ class TestHasDateExpression:
     )
     def test_detection(self, text, expected):
         assert has_date_expression(text) is expected
+
+
+class TestParseEvaluation:
+    def test_standard_format(self):
+        raw = "点数: 82\n\n野菜が豊富で良好。塩分がやや高め。"
+        score, body = parse_evaluation(raw)
+        assert score == 82
+        assert body == "野菜が豊富で良好。塩分がやや高め。"
+
+    def test_fullwidth_colon(self):
+        raw = "点数：73\n\n本文"
+        score, body = parse_evaluation(raw)
+        assert score == 73
+        assert body == "本文"
+
+    def test_no_blank_line(self):
+        raw = "点数: 60\n本文だけ"
+        score, body = parse_evaluation(raw)
+        assert score == 60
+        assert body == "本文だけ"
+
+    def test_no_score_line(self):
+        raw = "とても良い食事です。"
+        score, body = parse_evaluation(raw)
+        assert score is None
+        assert body == "とても良い食事です。"
+
+    def test_out_of_range(self):
+        raw = "点数: 150\n\n本文"
+        score, body = parse_evaluation(raw)
+        assert score is None
+        # 範囲外は本文として原文まるごと
+        assert "点数: 150" in body
+
+    def test_zero(self):
+        raw = "点数: 0\n\n全然だめ"
+        score, body = parse_evaluation(raw)
+        assert score == 0
+        assert body == "全然だめ"
+
+    def test_hundred(self):
+        raw = "点数: 100\n\n完璧"
+        score, body = parse_evaluation(raw)
+        assert score == 100
+        assert body == "完璧"

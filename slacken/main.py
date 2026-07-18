@@ -386,10 +386,15 @@ EVAL_PROMPT_TMPL = (
     "今回の食事について、健康診断で指摘されている項目・直近の食事傾向をふまえ、"
     "良い点と気になる点を短く評価してください。\n\n"
     "出力条件:\n"
-    "- Slackに投稿するので250文字以内、簡潔に\n"
+    "- 出力の1行目に必ず `点数: N` (N は 0〜100 の整数、100点満点) の形式で総合点数だけを書く\n"
+    "- 2行目は空行\n"
+    "- 3行目以降に評価コメント本文 (Slack投稿するので250文字以内、簡潔に)\n"
     "- 前置き・自己紹介・締めの挨拶は不要、本文のみ\n"
     "- Markdownの見出しやコードブロックは使わない (箇条書きは可)\n"
 )
+
+# 「点数: 87」等の形式で1行目に含まれる整数を拾う
+SCORE_RE = re.compile(r"点数[:：]\s*(\d{1,3})")
 
 
 def generate_evaluation_image(
@@ -423,6 +428,39 @@ def generate_evaluation_image(
                 return inline.data, (inline.mime_type or "image/png"), style
     print("gemini image gen: no inline_data in response", file=sys.stderr)
     return None
+
+
+def parse_evaluation(raw: str) -> tuple[int | None, str]:
+    """Gemini出力から (点数, コメント本文) を分離。
+    1行目に `点数: N` を期待するが、フォーマットが崩れた場合は先頭行の数字を拾い、
+    残りをそのまま本文として扱う。取れなければ (None, 原文)。"""
+    lines = raw.splitlines()
+    if not lines:
+        return None, raw
+    m = SCORE_RE.search(lines[0])
+    if not m:
+        return None, raw.strip()
+    score = int(m.group(1))
+    if not 0 <= score <= 100:
+        return None, raw.strip()
+    # 1行目と直後の空行を除去
+    body_lines = lines[1:]
+    while body_lines and not body_lines[0].strip():
+        body_lines.pop(0)
+    return score, "\n".join(body_lines).strip()
+
+
+def notion_set_score(page_id: str, score: int) -> None:
+    """Notionページの「点数」プロパティ (number) に整数点数をセット"""
+    r = requests.patch(
+        f"{NOTION_API}/pages/{page_id}",
+        headers=NOTION_HEADERS,
+        json={"properties": {"点数": {"number": score}}},
+        timeout=30,
+    )
+    if not r.ok:
+        print(f"notion score update failed: {r.status_code} {r.text}", file=sys.stderr)
+        r.raise_for_status()
 
 
 def notion_update_evaluation(
@@ -493,11 +531,18 @@ def evaluate_and_post(
         resp = gemini_client.models.generate_content(
             model=GEMINI_MODEL, contents=[prompt]
         )
-        evaluation = (resp.text or "").strip()
-        if not evaluation:
+        raw_evaluation = (resp.text or "").strip()
+        if not raw_evaluation:
             return
+        score, evaluation = parse_evaluation(raw_evaluation)
+        # 本文空になった場合は原文を使う (点数だけ取れて本文なしを避ける)
+        if not evaluation:
+            evaluation = raw_evaluation
         image = generate_evaluation_image(gemini_client, evaluation, meal)
-        slack_text = f":memo: *{meal}評価*\n{evaluation}"
+        header = f":memo: *{meal}評価*"
+        if score is not None:
+            header += f" *{score}/100点*"
+        slack_text = f"{header}\n{evaluation}"
         posted = False
         if image is not None:
             img_bytes, img_mime, _style = image
@@ -519,6 +564,11 @@ def evaluate_and_post(
                 channel=channel_id, thread_ts=thread_ts, text=slack_text
             )
         if page_id:
+            if score is not None:
+                try:
+                    notion_set_score(page_id, score)
+                except Exception as e:
+                    print(f"notion score write failed: {e}", file=sys.stderr)
             try:
                 notion_update_evaluation(
                     page_id,
