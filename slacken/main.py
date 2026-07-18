@@ -531,9 +531,11 @@ def evaluate_and_post(
         print(f"evaluation post failed: {e}", file=sys.stderr)
 
 
-def process_message(
+def process_one(
     slack: WebClient, gemini_client: genai.Client, channel_id: str, msg: dict
 ) -> None:
+    """1件のSlackメッセージをNotionへupsertし、必要に応じてスレッドに評価返信する。
+    cron (conversations.history) 経路と Events API 経路の両方から呼ばれる想定。"""
     # bot自身・システムメッセージは無視
     if msg.get("subtype") in ("channel_join", "channel_leave", "bot_message"):
         return
@@ -633,7 +635,7 @@ def main() -> None:
 
         for msg in resp.get("messages", []):
             try:
-                process_message(slack, gemini_client, channel_id, msg)
+                process_one(slack, gemini_client, channel_id, msg)
                 total += 1
             except Exception as e:
                 print(f"failed to process ts={msg.get('ts')}: {e}", file=sys.stderr)

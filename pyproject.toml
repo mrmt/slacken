@@ -12,6 +12,7 @@ dependencies = [
 [project.scripts]
 slacken = "slacken.main:main"
 slacken-advise = "slacken.advisor:main"
+slacken-process = "slacken.event:main"
 
 [build-system]
 requires = ["hatchling"]

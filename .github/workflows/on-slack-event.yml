@@ -1,0 +1,40 @@
+name: on-slack-event
+
+# Slack Events API 経由の1メッセージ処理。
+# Cloudflare Worker (署名検証済) が repository_dispatch (type=slack_message) で発火する想定。
+# client_payload には Slack Events API の event オブジェクト (もしくは outer body) が入る。
+on:
+  repository_dispatch:
+    types: [slack_message]
+
+# 同一メッセージが Slack retry や cron 併走で二重発火してもジョブを1本に絞る。
+# Notion側の upsert が permalink+Slack最終編集ts で冪等ではあるが、
+# ワークフロー多重起動によるAPI叩き放題を避ける。
+concurrency:
+  group: slacken-msg-${{ github.event.client_payload.event.ts || github.event.client_payload.ts || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+
+      - name: install
+        run: uv sync --frozen
+
+      - name: process one message
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          NOTION_DATABASE_ID: ${{ vars.NOTION_DATABASE_ID }}
+          SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}
+          # payload はシェル注入を避けるため env 経由 (直接 run 内展開しない)
+          PAYLOAD: ${{ toJson(github.event.client_payload) }}
+        run: printf '%s' "$PAYLOAD" | uv run slacken-process
