@@ -1,0 +1,6 @@
+# wrangler dev 用のローカルシークレット。
+# 実ファイルは .dev.vars として保存 (git ignore済)。
+# シェル変数展開はされない。値だけを右辺に。
+SLACK_SIGNING_SECRET=test_signing_secret
+# 署名検証テストだけなら以下はダミーでOK。dispatch まで通したい場合は本物を入れる。
+GH_APP_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"

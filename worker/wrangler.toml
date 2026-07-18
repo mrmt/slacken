@@ -1,0 +1,11 @@
+name = "slacken-events"
+main = "src/index.js"
+compatibility_date = "2025-11-01"
+
+# 非機密は vars で管理。秘匿値 (SLACK_SIGNING_SECRET, GH_APP_PRIVATE_KEY) は
+# wrangler secret put で登録すること。
+[vars]
+GH_REPO = "mrmt/slacken"
+GH_APP_ID = ""              # `wrangler deploy` 前に埋める (数値文字列)
+GH_INSTALLATION_ID = ""     # `wrangler deploy` 前に埋める (数値文字列)
+SLACK_CHANNEL_ID = ""       # #food のチャンネルID (C...)
