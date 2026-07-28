@@ -216,11 +216,13 @@ export default {
       });
     }
 
-    // Slack再送は Python側の冪等性で吸収できるが、GH Actions無駄撃ちを避けるため無視
+    // Slack再送も処理する。初回配送が Worker cold start 等で3秒超え→retry扱いで
+    // 握り潰されると当該メッセージが完全に取りこぼされる (Notion側は permalink upsert +
+    // on-slack-event の concurrency: slacken-msg-${ts} で冪等・単一実行が担保されているため
+    // 二重発火しても副作用なし)。ログだけ残す。
     const retryNum = request.headers.get("x-slack-retry-num");
     if (retryNum) {
-      console.log("skipping slack retry", retryNum);
-      return new Response("ok (retry ignored)");
+      console.log("processing slack retry", retryNum, request.headers.get("x-slack-retry-reason"));
     }
 
     if (body.type === "event_callback" && shouldDispatch(env, body.event)) {
