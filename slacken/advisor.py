@@ -117,7 +117,15 @@ def fetch_page_text(page_id: str) -> str:
             for b in data.get("results", []):
                 btype = b.get("type")
                 body = b.get(btype, {}) if btype else {}
-                if btype in RICH_TEXT_TYPES:
+                if btype == "table_row":
+                    # table_row は rich_text ではなく cells にセル単位のテキストを持つ
+                    text = " | ".join(
+                        "".join(rt.get("plain_text", "") for rt in cell)
+                        for cell in body.get("cells", [])
+                    )
+                    if text.strip():
+                        lines.append("  " * depth + text)
+                elif btype in RICH_TEXT_TYPES:
                     text = "".join(
                         rt.get("plain_text", "") for rt in body.get("rich_text", [])
                     )
