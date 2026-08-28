@@ -8,7 +8,7 @@ Slack `#food` チャンネルへの食事投稿を Notion DB に自動取り込�
 - 蓄積先: Notion DB「食事記録」 (Diet Teamspace / 「21世紀の体重異常者」配下)
 - 実行方式:
   - **同期** (`slacken`): GitHub Actions cron (JST 6:00-24:00 のみ毎時、深夜帯はスキップ)
-  - **アドバイス** (`slacken-advise`): GitHub Actions cron (JST 6:00 朝食 / 12:00 昼食 / 17:00 夕食)
+  - **アドバイス** (`slacken-advise`): 定期実行は無効化済み。`workflow_dispatch` で手動実行のみ
 
 ## Notion DB 構造
 
@@ -65,7 +65,7 @@ DB URL: <https://app.notion.com/p/b12824e541a7443bbd804ed58dd13f12>
 
 ### 定時アドバイス (`slacken-advise`)
 
-- JST 6:00 (朝食) / 12:00 (昼食) / 17:00 (夕食) に自動実行、`#food` に投稿
+- 定期実行 (cron) は無効化済み (実行遅延が大きく実用性が低いため)。`workflow_dispatch` の手動実行で `#food` に投稿
 - 直近 `ADVICE_LOOKBACK_DAYS` 日 (既定14日) の食事記録 + 健康診断コンテキストを Gemini に投入
 - これから食べる該当区分への提案 (300文字以内、メニュー案含む)
 - `workflow_dispatch` で任意区分を手動 trigger 可能
