@@ -1,14 +1,15 @@
 name: advise
 
 on:
-  schedule:
-    # 毎時0分はGitHub Actions側の高負荷で遅延・スキップされやすいため3分にずらす
-    # JST 6:03 (UTC 21:03 前日) → 朝食
-    - cron: "3 21 * * *"
-    # JST 12:03 (UTC 3:03) → 昼食
-    - cron: "3 3 * * *"
-    # JST 17:03 (UTC 8:03) → 夕食
-    - cron: "3 8 * * *"
+  # 定期実行は無効化 (実行遅延が大きく実用性が低いため)。手動実行のみ残す
+  # schedule:
+  #   # 毎時0分はGitHub Actions側の高負荷で遅延・スキップされやすいため3分にずらす
+  #   # JST 6:03 (UTC 21:03 前日) → 朝食
+  #   - cron: "3 21 * * *"
+  #   # JST 12:03 (UTC 3:03) → 昼食
+  #   - cron: "3 3 * * *"
+  #   # JST 17:03 (UTC 8:03) → 夕食
+  #   - cron: "3 8 * * *"
   workflow_dispatch:
     inputs:
       meal:
