@@ -8,7 +8,7 @@
 #   ./test-local.sh challenge   # url_verification challenge
 #   ./test-local.sh message     # 通常メッセージ (dispatch 発火試行、GHダミー鍵ならFail)
 #   ./test-local.sh bot         # bot_message (フィルタでスキップ)
-#   ./test-local.sh retry       # retry ヘッダ付き (スキップ)
+#   ./test-local.sh retry       # retry ヘッダ付き (通常メッセージと同様に dispatch 発火試行)
 #   ./test-local.sh badsig      # 不正な署名 (401)
 #   ./test-local.sh notmsg      # メッセージ以外 (スキップ)
 #   ./test-local.sh wrongch     # 対象外チャンネル (スキップ)
@@ -58,7 +58,8 @@ case "${1:-}" in
     send '{"type":"event_callback","event":{"type":"message","subtype":"bot_message","channel":"C_TEST","ts":"1.0","bot_id":"B1"}}'
     ;;
   retry)
-    send '{"type":"event_callback","event":{"type":"message","channel":"C_TEST","ts":"1.0","text":"x","user":"U1"}}' "-H x-slack-retry-num:1"
+    # 再送も無視せず処理する。ログに processing slack retry が出て dispatch 経路へ進めば正常
+    send '{"type":"event_callback","event":{"type":"message","channel":"'"${SLACK_CHANNEL_ID:-C_TEST}"'","ts":"1731234567.000200","text":"再送されたラーメン","user":"U123"}}' "-H x-slack-retry-num:1 -H x-slack-retry-reason:http_timeout"
     ;;
   badsig)
     TS_OK="$TS"
