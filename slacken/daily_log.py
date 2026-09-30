@@ -150,6 +150,10 @@ def main() -> None:
 
     auth = slack.auth_test()
     print(f"auth: team={auth.get('team')} user={auth.get('user')} lookback_hours={lookback_hours}")
+    info = slack.conversations_info(channel=channel)["channel"]
+    print(f"channel: name={info.get('name')} is_member={info.get('is_member')} is_private={info.get('is_private')} is_archived={info.get('is_archived')}")
+    raw = slack.conversations_history(channel=channel, limit=5)
+    print(f"latest5 (oldest指定なし): count={len(raw['messages'])} ts={[m['ts'] for m in raw['messages']]} now={time.time():.0f}")
     fetched = fetch_messages(slack, channel, lookback_hours)
     messages = [m for m in fetched if is_target_message(m)]
     print(f"fetched={len(fetched)} target={len(messages)} channel={channel}")
