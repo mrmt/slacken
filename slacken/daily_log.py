@@ -148,7 +148,12 @@ def main() -> None:
     channel = os.environ.get("DAILY_LOG_CHANNEL_ID", "C0C4WUKF47K")
     lookback_hours = int(os.environ.get("LOOKBACK_HOURS", "48"))
 
-    messages = [m for m in fetch_messages(slack, channel, lookback_hours) if is_target_message(m)]
+    fetched = fetch_messages(slack, channel, lookback_hours)
+    messages = [m for m in fetched if is_target_message(m)]
+    print(f"fetched={len(fetched)} target={len(messages)} channel={channel}")
+    for m in fetched:
+        if not is_target_message(m):
+            print(f"excluded: ts={m['ts']} subtype={m.get('subtype')} bot_id={m.get('bot_id')} text_len={len(m.get('text') or '')}")
     added = skipped = 0
     for day, msgs in group_by_date(messages).items():
         page_id = notion.find_or_create_day_page(day)
