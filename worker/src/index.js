@@ -7,7 +7,8 @@
 //   GH_REPO               — "mrmt/slacken"
 //   GH_APP_ID             — GitHub App の App ID (数値文字列)
 //   GH_INSTALLATION_ID    — GitHub App の Installation ID (数値文字列)
-//   SLACK_CHANNEL_ID      — 対象チャンネルID (C...)。空文字なら全チャンネル通す
+//   SLACK_CHANNEL_ID      — 食事記録の対象チャンネルID (C...)。空文字なら全チャンネル通す
+//   DAILY_LOG_CHANNEL_ID  — 日誌蓄積 (daily-log) の対象チャンネルID。event_type=daily_log_message で dispatch
 
 const encoder = new TextEncoder();
 
@@ -142,7 +143,7 @@ async function getInstallationToken(env) {
 
 // ---------- Dispatch ----------
 
-async function dispatchGithub(env, event) {
+async function dispatchGithub(env, event, eventType) {
   let token;
   try {
     token = await getInstallationToken(env);
@@ -162,7 +163,7 @@ async function dispatchGithub(env, event) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        event_type: "slack_message",
+        event_type: eventType,
         client_payload: { event },
       }),
     },
@@ -174,18 +175,22 @@ async function dispatchGithub(env, event) {
 
 // ---------- Event フィルタ ----------
 
-function shouldDispatch(env, event) {
-  if (!event || event.type !== "message") return false;
+// dispatch する event_type を返す。対象外は null
+function dispatchType(env, event) {
+  if (!event || event.type !== "message") return null;
   const skipSubtypes = new Set([
     "channel_join",
     "channel_leave",
     "bot_message",
     "message_deleted",
   ]);
-  if (event.subtype && skipSubtypes.has(event.subtype)) return false;
-  if (event.bot_id) return false;
-  if (env.SLACK_CHANNEL_ID && event.channel !== env.SLACK_CHANNEL_ID) return false;
-  return true;
+  if (event.subtype && skipSubtypes.has(event.subtype)) return null;
+  if (event.bot_id) return null;
+  if (env.DAILY_LOG_CHANNEL_ID && event.channel === env.DAILY_LOG_CHANNEL_ID) {
+    return "daily_log_message";
+  }
+  if (env.SLACK_CHANNEL_ID && event.channel !== env.SLACK_CHANNEL_ID) return null;
+  return "slack_message";
 }
 
 // ---------- fetch handler ----------
@@ -225,9 +230,10 @@ export default {
       console.log("processing slack retry", retryNum, request.headers.get("x-slack-retry-reason"));
     }
 
-    if (body.type === "event_callback" && shouldDispatch(env, body.event)) {
+    const eventType = body.type === "event_callback" ? dispatchType(env, body.event) : null;
+    if (eventType) {
       // 3秒SLA遵守のため待たずに即200を返す
-      ctx.waitUntil(dispatchGithub(env, body.event));
+      ctx.waitUntil(dispatchGithub(env, body.event, eventType));
     }
 
     return new Response("ok");

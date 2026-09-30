@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 import sys
 import time
@@ -128,6 +129,24 @@ class Notion:
             )
 
 
+def event_message(payload: str, channel: str) -> dict | None:
+    """repository_dispatch の client_payload から対象チャネルの message イベントを取り出す"""
+    if not payload.strip():
+        return None
+    data = json.loads(payload)
+    event = data.get("event") if isinstance(data.get("event"), dict) else data
+    if event.get("type") != "message" or event.get("channel") != channel or not event.get("ts"):
+        return None
+    return event
+
+
+def merge_messages(fetched: list[dict], extra: dict | None) -> list[dict]:
+    """ts で重複排除して結合"""
+    if extra is None or any(m["ts"] == extra["ts"] for m in fetched):
+        return fetched
+    return [*fetched, extra]
+
+
 def fetch_messages(slack: WebClient, channel: str, lookback_hours: int) -> list[dict]:
     oldest = time.time() - lookback_hours * 3600
     messages: list[dict] = []
@@ -148,7 +167,14 @@ def main() -> None:
     channel = os.environ.get("DAILY_LOG_CHANNEL_ID", "C0C4WUKF47K")
     lookback_hours = int(os.environ.get("LOOKBACK_HOURS", "48"))
 
-    messages = [m for m in fetch_messages(slack, channel, lookback_hours) if is_target_message(m)]
+    fetched = fetch_messages(slack, channel, lookback_hours)
+    event_msg = event_message(os.environ.get("PAYLOAD", ""), channel)
+    # history が時折0件を返すため、イベント経由の投稿本体も確実に対象に含める
+    messages = [m for m in merge_messages(fetched, event_msg) if is_target_message(m)]
+    print(f"fetched={len(fetched)} event={'yes' if event_msg else 'no'} target={len(messages)}")
+    for m in fetched:
+        if not is_target_message(m):
+            print(f"excluded: ts={m['ts']} subtype={m.get('subtype')} bot_id={m.get('bot_id')}")
     added = skipped = 0
     for day, msgs in group_by_date(messages).items():
         page_id = notion.find_or_create_day_page(day)

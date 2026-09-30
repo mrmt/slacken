@@ -13,8 +13,9 @@ Slack `#food` チャンネルへの食事投稿を Notion DB「食事記録」�
 
 ## 日誌蓄積 (daily-log)
 
-shakuji.slack.com の自分用チャネル (`C0C4WUKF47K`) の投稿を Notion「daily log」日誌DBへ1日1ページで追記 (`slacken/daily_log.py`, `daily-log.yml` 毎時)。食事同期とは独立。
+shakuji.slack.com の自分用チャネル (`C0C4WUKF47K`) の投稿を Notion「daily log」日誌DBへ1日1ページで追記 (`slacken/daily_log.py`, `daily-log.yml`)。食事同期とは独立。
 
+- 起動: Worker が `DAILY_LOG_CHANNEL_ID` の投稿を `repository_dispatch` (`daily_log_message`) で即時発火 + 毎時 cron で取りこぼし回収。イベント本体 (`PAYLOAD`) も history と ts で結合して追記
 - 環境変数: 必須 `DAILY_LOG_SLACK_TOKEN` (Actions では Secret `SLACK_BOT_TOKEN` を渡す), `NOTION_TOKEN`, `DAILY_LOG_DATABASE_ID` / 任意 `DAILY_LOG_CHANNEL_ID`, `LOOKBACK_HOURS` (既定 48)
 - 重複防止: 各投稿の時刻に permalink を付与し、既出 permalink はスキップ。編集追随・画像は非対応
 - 事前作業: Slack App に `channels:history` 付与+Bot招待、Notion Integration を「daily log」ページに共有

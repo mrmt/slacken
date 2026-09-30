@@ -4,6 +4,9 @@ on:
   schedule:
     # 毎時 (GitHub Actions側の高負荷を避け17分にずらす)
     - cron: "17 * * * *"
+  # Cloudflare Worker (Slack Events API) から投稿直後に発火
+  repository_dispatch:
+    types: [daily_log_message]
   workflow_dispatch:
     inputs:
       lookback_hours:
@@ -11,7 +14,8 @@ on:
         required: false
         default: "48"
 
-# 追記型のため並走すると重複追記が起きる。同時実行を1本に絞る
+# 追記型のため並走すると重複追記・日ページ二重作成が起きる。同時実行を1本に絞る
+# (pending が新しい run に置き換わっても、各 run が履歴全体を同期するので取りこぼさない)
 concurrency:
   group: daily-log
   cancel-in-progress: false
@@ -37,4 +41,6 @@ jobs:
           DAILY_LOG_DATABASE_ID: ${{ vars.DAILY_LOG_DATABASE_ID || '1ab29ec6bc9b80748782ced087623140' }}
           DAILY_LOG_CHANNEL_ID: ${{ vars.DAILY_LOG_CHANNEL_ID || 'C0C4WUKF47K' }}
           LOOKBACK_HOURS: ${{ inputs.lookback_hours || '48' }}
+          # payload はシェル注入を避けるため env 経由 (cron/手動実行時は空)
+          PAYLOAD: ${{ github.event_name == 'repository_dispatch' && toJson(github.event.client_payload) || '' }}
         run: uv run slacken-daily-log
