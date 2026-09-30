@@ -148,6 +148,18 @@ def main() -> None:
     channel = os.environ.get("DAILY_LOG_CHANNEL_ID", "C0C4WUKF47K")
     lookback_hours = int(os.environ.get("LOOKBACK_HOURS", "48"))
 
+    # 一時診断: Notion のアクセス可否を確認
+    for ver, path in [
+        ("2022-06-28", "/pages/dcb57399b0d747eb9dc305d82f2df07c"),
+        ("2022-06-28", "/databases/1ab29ec6bc9b80748782ced087623140"),
+        ("2022-06-28", "/blocks/dcb57399b0d747eb9dc305d82f2df07c/children"),
+        ("2025-09-03", "/databases/1ab29ec6bc9b80748782ced087623140"),
+        ("2025-09-03", "/data_sources/1ab29ec6bc9b808dbef9000b1c1de058"),
+    ]:
+        r = requests.get(f"{NOTION_API}{path}", headers={**notion.headers, "Notion-Version": ver}, timeout=30)
+        print(f"diag {ver} {path}: {r.status_code} {r.text[:600]}")
+    r = requests.post(f"{NOTION_API}/search", headers=notion.headers, json={"query": "日誌"}, timeout=30)
+    print(f"diag search: {r.status_code} {[(x['object'], x['id'], x.get('parent')) for x in r.json().get('results', [])][:10]}")
     auth = slack.auth_test()
     print(f"auth: team={auth.get('team')} user={auth.get('user')} lookback_hours={lookback_hours}")
     info = slack.conversations_info(channel=channel)["channel"]
