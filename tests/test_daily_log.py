@@ -1,4 +1,8 @@
+import json
+
 from slacken.daily_log import (
+    event_message,
+    merge_messages,
     build_blocks,
     extract_links,
     group_by_date,
@@ -41,3 +45,18 @@ def test_build_blocks_と_extract_links往復():
 
 def test_normalize_permalink():
     assert normalize_permalink("https://x/p1?thread_ts=1") == "https://x/p1"
+
+
+def test_event_message():
+    ev = {"type": "message", "channel": "C1", "ts": "1.0", "text": "x"}
+    assert event_message(json.dumps({"event": ev}), "C1") == ev
+    assert event_message(json.dumps(ev), "C1") == ev
+    assert event_message(json.dumps({"event": ev}), "C2") is None
+    assert event_message("", "C1") is None
+
+
+def test_merge_messages():
+    a = {"ts": "1.0"}
+    assert merge_messages([a], None) == [a]
+    assert merge_messages([a], {"ts": "1.0", "text": "dup"}) == [a]
+    assert merge_messages([], a) == [a]

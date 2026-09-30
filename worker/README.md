@@ -45,6 +45,7 @@ GH_REPO = "mrmt/slacken"
 GH_APP_ID = "123456"            # GitHub App の App ID
 GH_INSTALLATION_ID = "78901234" # #1 手順の Installation ID
 SLACK_CHANNEL_ID = "C0123ABCD"  # #food のチャンネルID
+DAILY_LOG_CHANNEL_ID = "C0C4WUKF47K"  # 日誌蓄積 (daily-log) のチャンネルID
 ```
 
 シークレット登録:

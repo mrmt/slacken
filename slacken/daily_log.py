@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 import sys
 import time
@@ -128,6 +129,24 @@ class Notion:
             )
 
 
+def event_message(payload: str, channel: str) -> dict | None:
+    """repository_dispatch の client_payload から対象チャネルの message イベントを取り出す"""
+    if not payload.strip():
+        return None
+    data = json.loads(payload)
+    event = data.get("event") if isinstance(data.get("event"), dict) else data
+    if event.get("type") != "message" or event.get("channel") != channel or not event.get("ts"):
+        return None
+    return event
+
+
+def merge_messages(fetched: list[dict], extra: dict | None) -> list[dict]:
+    """ts で重複排除して結合"""
+    if extra is None or any(m["ts"] == extra["ts"] for m in fetched):
+        return fetched
+    return [*fetched, extra]
+
+
 def fetch_messages(slack: WebClient, channel: str, lookback_hours: int) -> list[dict]:
     oldest = time.time() - lookback_hours * 3600
     messages: list[dict] = []
@@ -148,30 +167,14 @@ def main() -> None:
     channel = os.environ.get("DAILY_LOG_CHANNEL_ID", "C0C4WUKF47K")
     lookback_hours = int(os.environ.get("LOOKBACK_HOURS", "48"))
 
-    # 一時診断: Notion のアクセス可否を確認
-    for ver, path in [
-        ("2022-06-28", "/pages/dcb57399b0d747eb9dc305d82f2df07c"),
-        ("2022-06-28", "/databases/1ab29ec6bc9b80748782ced087623140"),
-        ("2022-06-28", "/blocks/dcb57399b0d747eb9dc305d82f2df07c/children"),
-        ("2025-09-03", "/databases/1ab29ec6bc9b80748782ced087623140"),
-        ("2025-09-03", "/data_sources/1ab29ec6bc9b808dbef9000b1c1de058"),
-    ]:
-        r = requests.get(f"{NOTION_API}{path}", headers={**notion.headers, "Notion-Version": ver}, timeout=30)
-        print(f"diag {ver} {path}: {r.status_code} {r.text[:600]}")
-    r = requests.post(f"{NOTION_API}/search", headers=notion.headers, json={"query": "日誌"}, timeout=30)
-    print(f"diag search: {r.status_code} {[(x['object'], x['id'], x.get('parent')) for x in r.json().get('results', [])][:10]}")
-    auth = slack.auth_test()
-    print(f"auth: team={auth.get('team')} user={auth.get('user')} lookback_hours={lookback_hours}")
-    info = slack.conversations_info(channel=channel)["channel"]
-    print(f"channel: name={info.get('name')} is_member={info.get('is_member')} is_private={info.get('is_private')} is_archived={info.get('is_archived')}")
-    raw = slack.conversations_history(channel=channel, limit=5)
-    print(f"latest5 (oldest指定なし): count={len(raw['messages'])} ts={[m['ts'] for m in raw['messages']]} now={time.time():.0f}")
     fetched = fetch_messages(slack, channel, lookback_hours)
-    messages = [m for m in fetched if is_target_message(m)]
-    print(f"fetched={len(fetched)} target={len(messages)} channel={channel}")
+    event_msg = event_message(os.environ.get("PAYLOAD", ""), channel)
+    # history が時折0件を返すため、イベント経由の投稿本体も確実に対象に含める
+    messages = [m for m in merge_messages(fetched, event_msg) if is_target_message(m)]
+    print(f"fetched={len(fetched)} event={'yes' if event_msg else 'no'} target={len(messages)}")
     for m in fetched:
         if not is_target_message(m):
-            print(f"excluded: ts={m['ts']} subtype={m.get('subtype')} bot_id={m.get('bot_id')} text_len={len(m.get('text') or '')}")
+            print(f"excluded: ts={m['ts']} subtype={m.get('subtype')} bot_id={m.get('bot_id')}")
     added = skipped = 0
     for day, msgs in group_by_date(messages).items():
         page_id = notion.find_or_create_day_page(day)
