@@ -148,6 +148,8 @@ def main() -> None:
     channel = os.environ.get("DAILY_LOG_CHANNEL_ID", "C0C4WUKF47K")
     lookback_hours = int(os.environ.get("LOOKBACK_HOURS", "48"))
 
+    auth = slack.auth_test()
+    print(f"auth: team={auth.get('team')} user={auth.get('user')} lookback_hours={lookback_hours}")
     fetched = fetch_messages(slack, channel, lookback_hours)
     messages = [m for m in fetched if is_target_message(m)]
     print(f"fetched={len(fetched)} target={len(messages)} channel={channel}")
