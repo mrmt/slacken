@@ -19,15 +19,6 @@ shakuji.slack.com の自分用チャネル (`C0C4WUKF47K`) の投稿を Notion�
 - 重複防止: 各投稿の時刻に permalink を付与し、既出 permalink はスキップ。編集追随・画像は非対応
 - 事前作業: Slack App に `channels:history` 付与+Bot招待、Notion Integration を「daily log」ページに共有
 
-=======
-
-## 実行環境
-
-依存管理・実行は `uv` を使う。ローカル実行時は下記環境変数を全て設定:
-
-- 必須: `SLACK_BOT_TOKEN`, `NOTION_TOKEN`, `GOOGLE_API_KEY`, `NOTION_DATABASE_ID`
-- 任意: `SLACK_CHANNEL` (既定 `food`), `LOOKBACK_HOURS` (既定 168), `GEMINI_MODEL` (既定 `gemini-flash-latest`), `ADVICE_LOOKBACK_DAYS` (既定 14), `HEALTH_CONTEXT_PAGE_ID` (既定は健康診断ページ)
-
 ## 設計上の重要な選択
 
 - **Upsert キーは Slack permalink** (`Slack投稿元` プロパティ)。編集された投稿にも追随する
