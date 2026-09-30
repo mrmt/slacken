@@ -13,6 +13,7 @@ dependencies = [
 slacken = "slacken.main:main"
 slacken-advise = "slacken.advisor:main"
 slacken-process = "slacken.event:main"
+slacken-daily-log = "slacken.daily_log:main"
 
 [build-system]
 requires = ["hatchling"]

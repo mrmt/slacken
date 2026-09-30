@@ -1,0 +1,40 @@
+name: daily-log
+
+on:
+  schedule:
+    # 毎時 (GitHub Actions側の高負荷を避け17分にずらす)
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      lookback_hours:
+        description: "遡って取り込む時間 (時間)"
+        required: false
+        default: "48"
+
+# 追記型のため並走すると重複追記が起きる。同時実行を1本に絞る
+concurrency:
+  group: daily-log
+  cancel-in-progress: false
+
+jobs:
+  daily-log:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+
+      - name: install
+        run: uv sync --frozen
+
+      - name: run daily-log
+        env:
+          DAILY_LOG_SLACK_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          DAILY_LOG_DATABASE_ID: ${{ vars.DAILY_LOG_DATABASE_ID || '1ab29ec6bc9b80748782ced087623140' }}
+          DAILY_LOG_CHANNEL_ID: ${{ vars.DAILY_LOG_CHANNEL_ID || 'C0C4WUKF47K' }}
+          LOOKBACK_HOURS: ${{ inputs.lookback_hours || '48' }}
+        run: uv run slacken-daily-log
