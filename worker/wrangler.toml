@@ -2,6 +2,10 @@ name = "slacken-events"
 main = "src/index.js"
 compatibility_date = "2025-11-01"
 
+# Workers Logs (アクセス元IP等の調査用。無料プランは3日保持)
+[observability]
+enabled = true
+
 # 非機密は vars で管理。秘匿値 (SLACK_SIGNING_SECRET, GH_APP_PRIVATE_KEY) は
 # wrangler secret put で登録すること。
 [vars]
